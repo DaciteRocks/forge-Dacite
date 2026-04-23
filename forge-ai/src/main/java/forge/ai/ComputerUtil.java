@@ -1155,6 +1155,15 @@ public class ComputerUtil {
             }
         }
 
+        // Our commander is almost always a key enabler — cast it in main 1 whenever we can afford
+        // the mana cost (including commander tax). This prevents the AI from holding the commander
+        // for turns while burning mana on less impactful spells. Especially important for
+        // enchantment-creature commanders (Gods) that don't go through PermanentCreatureAi's
+        // existing commander fast-track because they aren't classified as creatures at cast time.
+        if (card.isCommander() && card.getOwner() == ai) {
+            return true;
+        }
+
         // cast Backup creatures in main 1 to pump attackers
         if (cardState.hasKeyword(Keyword.BACKUP)) {
             for (Card potentialAtkr: ai.getCreaturesInPlay()) {
@@ -2118,6 +2127,22 @@ public class ComputerUtil {
 
         score += castables.size() * 2;
 
+        // Cheap ramp (Sol Ring / Signets / Mind Stone / rituals) effectively adds a land on T2 and
+        // smooths curves in commander. Reward it — a 2-land hand with a Sol Ring plays like 3 lands.
+        int rampBonus = 0;
+        for (Card c : handList) {
+            if (c.isLand()) continue;
+            if (c.getManaCost().getCMC() > 2) continue;
+            if (c.isArtifact() || c.isInstant() || c.isSorcery()) {
+                for (SpellAbility ma : c.getManaAbilities()) {
+                    if (ma != null) { rampBonus++; break; }
+                }
+                // also catch AddMana / ritual-style spells by name tag in SVars
+                if (c.hasSVar("RemAIDeck") || c.hasSVar("RampSpell")) rampBonus++;
+            }
+        }
+        score += Math.min(rampBonus, 3) * 3;
+
         // Improve score for perceived mana efficiency of the hand
 
         // if at mulligan threshold, and we have any lands accept the hand
@@ -2125,12 +2150,25 @@ public class ComputerUtil {
             return score;
         }
 
+        // Zero-land hands are near-unplayable unless the deck has essentially no lands.
+        // (The old code lumped 0 and 1 together, which kept too many screw hands.)
+        if (landSize == 0) {
+            if (landsInDeck == 0 || library.size() / Math.max(landsInDeck, 1) > 10) {
+                return handSize;
+            }
+            return 0;
+        }
+
         // otherwise, reject bad hands or return score
         if (landSize < 2) {
-            // BAD Hands, 0 or 1 lands
+            // 1-land hand: keep only if we have cheap ramp or a plausible curve
             if (landsInDeck == 0 || library.size()/landsInDeck > 6) {
                 // Heavy spell deck it's ok
                 return handSize;
+            }
+            if (rampBonus >= 1 && handSize >= 7) {
+                // one land + ramp can function; partially credit the hand rather than auto-reject
+                return Math.max(1, score / 2);
             }
             return 0;
         } else if (landSize == handSize) {
@@ -2147,6 +2185,9 @@ public class ComputerUtil {
                 return handSize;
             }
             return 0;
+        } else if (handSize >= 7 && landSize >= 5 && rampBonus == 0) {
+            // 5/7 lands with no ramp and no cheap spells = flood — penalize but don't auto-mull
+            return Math.max(1, score / 2);
         }
         return score;
     }

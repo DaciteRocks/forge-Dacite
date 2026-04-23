@@ -7,12 +7,15 @@ import forge.game.card.Card;
 import forge.game.card.CounterEnumType;
 import forge.game.cost.CostPayEnergy;
 import forge.game.keyword.Keyword;
+import forge.game.player.Player;
 import forge.game.spellability.SpellAbility;
+import forge.game.staticability.StaticAbility;
 import forge.game.staticability.StaticAbilityAssignCombatDamageAsUnblocked;
 import forge.game.staticability.StaticAbilityCantAttackBlock;
 import forge.game.staticability.StaticAbilityMustAttack;
 import forge.game.trigger.Trigger;
 import forge.game.trigger.TriggerType;
+import forge.game.zone.ZoneType;
 
 import java.util.List;
 import java.util.function.Function;
@@ -178,7 +181,14 @@ public class CreatureEvaluator implements Function<Card, Integer> {
 
         // Bad keywords
         if (c.hasKeyword(Keyword.DEFENDER) || c.hasKeyword("CARDNAME can't attack.")) {
-            value -= subValue((power * 9) + 40, "defender");
+            int defenderPenalty = (power * 9) + 40;
+            // In a deck that grants tap-mill abilities to creatures (e.g. Phenax, God of Deception),
+            // a high-toughness defender is a primary win condition, not a dead card. Cancel most of
+            // the defender penalty when such a grant is available to the controller.
+            if (controllerHasTapMillGrant(c)) {
+                defenderPenalty = Math.max(0, defenderPenalty - 35 - toughness * 3);
+            }
+            value -= subValue(defenderPenalty, "defender");
         } else if (c.getSVar("SacrificeEndCombat").equals("True")) {
             value -= subValue(40, "sac-end");
         }
@@ -311,11 +321,60 @@ public class CreatureEvaluator implements Function<Card, Integer> {
                     }
                 }
             }
+        } else if (sa.getApi() == ApiType.Mill && sa.hasParam("NumCards")) {
+            // Tap-mill abilities (Doorkeeper, Phenax grants) are a core win condition in mill decks.
+            // Score them well above the generic +10 so defenders with mill get cast.
+            int numCards = 0;
+            try {
+                numCards = AbilityUtils.calculateAmount(sa.getHostCard(), sa.getParam("NumCards"), sa);
+            } catch (Exception ignored) {
+                // NumCards may reference SVars not yet resolvable in hand context; fall back to toughness estimate.
+                numCards = Math.max(0, sa.getHostCard().getNetToughness());
+            }
+            if (numCards <= 0) {
+                numCards = Math.max(0, sa.getHostCard().getNetToughness());
+            }
+            return 15 + Math.min(60, numCards * 4);
         } else if (ComputerUtilCost.isSacrificeSelfCost(sa.getPayCosts())) {
             return -10; // can be sacrificed in response to ability or spell, thus, less prioritable
         }
         // default value
         return 10;
+    }
+
+    /**
+     * Detect whether the creature's controller currently has a permanent in play whose static
+     * ability grants a tap-mill activated ability to creatures (Phenax, God of Deception being
+     * the canonical example). Used to avoid heavily penalising defenders/walls in such decks.
+     */
+    private boolean controllerHasTapMillGrant(final Card c) {
+        final Player controller = c.getController();
+        if (controller == null) {
+            return false;
+        }
+        for (final Card perm : controller.getCardsIn(ZoneType.Battlefield)) {
+            for (final StaticAbility stAb : perm.getStaticAbilities()) {
+                if (!"Continuous".equalsIgnoreCase(stAb.getParam("Mode"))) {
+                    continue;
+                }
+                final String addAbility = stAb.getParam("AddAbility");
+                if (addAbility == null) {
+                    continue;
+                }
+                final String affected = stAb.getParam("Affected");
+                if (affected == null || !affected.contains("Creature")) {
+                    continue;
+                }
+                // Look up the referenced ability on the grant source and confirm it's a tap-mill.
+                for (final String abKey : addAbility.split(" & ")) {
+                    final String abDef = perm.getSVar(abKey);
+                    if (abDef != null && abDef.contains("AB$ Mill") && abDef.contains("Cost$ T")) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     protected int addValue(int value, String text) {

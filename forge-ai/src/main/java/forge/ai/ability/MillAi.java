@@ -8,6 +8,7 @@ import forge.game.card.Card;
 import forge.game.card.CardCollectionView;
 import forge.game.card.CardLists;
 import forge.game.card.CardPredicates;
+import forge.game.keyword.Keyword;
 import forge.game.phase.PhaseHandler;
 import forge.game.phase.PhaseType;
 import forge.game.player.Player;
@@ -34,10 +35,23 @@ public class MillAi extends SpellAbilityAi {
     
     @Override
     protected boolean checkPhaseRestrictions(final Player ai, final SpellAbility sa, final PhaseHandler ph) {
-        if ("ExileAndPlayUntilEOT".equals(sa.getParam("AILogic"))) {
+        final String aiLogic = sa.getParam("AILogic");
+        if ("ExileAndPlayUntilEOT".equals(aiLogic)) {
             return ph.is(PhaseType.MAIN1) && ph.isPlayerTurn(ai); // try to maximize the chance of being able to play the card this turn
-        } else if ("ExileAndPlayOrDealDamage".equals(sa.getParam("AILogic"))) {
+        } else if ("ExileAndPlayOrDealDamage".equals(aiLogic)) {
             return (ph.is(PhaseType.MAIN1) || ph.is(PhaseType.MAIN2)) && ph.isPlayerTurn(ai); // Chandra, Torch of Defiance and similar
+        } else if ("MillAnytime".equals(aiLogic)) {
+            // Dedicated mill payoffs (Phenax grants, Doorkeeper): try to activate on our MAIN2
+            // so the mill progresses each turn, but only when it's safe to leave the creature
+            // tapped through the intervening opponents' turns. If we'd lose crucial blockers,
+            // fall back to the single EOT mill before our turn.
+            if (wouldLoopOnSelfUntap(ai, sa)) {
+                return false;
+            }
+            if (ph.is(PhaseType.MAIN2) && ph.isPlayerTurn(ai) && safeToTapBlockerForMill(ai, sa.getHostCard())) {
+                return true;
+            }
+            return ph.is(PhaseType.END_OF_TURN) && ph.getNextTurn().equals(ai);
         }
         if (!sa.isPwAbility()) { // Planeswalker abilities are only activated at sorcery speed
             if ("You".equals(sa.getParam("Defined")) && !(!isSorcerySpeed(sa, ai) && ph.is(PhaseType.END_OF_TURN)
@@ -46,8 +60,17 @@ public class MillAi extends SpellAbilityAi {
             }
         }
         if (sa.getHostCard().isCreature() && sa.getPayCosts().hasTapCost()) {
-            // creatures with a tap cost to mill (e.g. Doorkeeper) should be activated at the opponent's end step
-            // because they are also potentially useful for combat
+            // creatures with a tap cost to mill (e.g. Doorkeeper) are normally held until the opponent's
+            // end step before our turn so they remain available to block. For creatures that cannot attack
+            // (Defender keyword, 0 power), we'd lose nothing offensive by tapping on our own turn — but
+            // we'd still lose blocking on intervening opponents' turns, which matters in multiplayer.
+            // Allow MAIN2 activation only if doing so leaves us with enough untapped blockers.
+            final Card host = sa.getHostCard();
+            final boolean cannotAttack = host.hasKeyword(Keyword.DEFENDER) || host.getNetPower() <= 0;
+            if (cannotAttack && ph.is(PhaseType.MAIN2) && ph.isPlayerTurn(ai)
+                    && safeToTapBlockerForMill(ai, host)) {
+                return true;
+            }
             return ph.is(PhaseType.END_OF_TURN) && ph.getNextTurn().equals(ai);
         }
         return !ph.getPhase().isBefore(PhaseType.MAIN2) || sa.hasParam("ActivationPhases")
@@ -148,10 +171,28 @@ public class MillAi extends SpellAbilityAi {
                 return sa.isTargetNumberValid();
             }
 
-            // select Player which would cause the most damage
-            Map.Entry<Player, Integer> max = Collections.max(list.entrySet(), Map.Entry.comparingByValue());
+            // In multiplayer, if an opponent is already close to being decked, focus them so we
+            // can finish the kill. Otherwise pick the opponent where we'd mill the most — locking
+            // early onto one full-library opponent wastes mills while other opponents build a board.
+            Map.Entry<Player, Integer> best = null;
+            if (ai.getOpponents().size() > 1) {
+                final int FINISH_THRESHOLD = 25;
+                for (final Map.Entry<Player, Integer> e : list.entrySet()) {
+                    int lib = e.getKey().getCardsIn(ZoneType.Library).size();
+                    if (lib >= FINISH_THRESHOLD) {
+                        continue;
+                    }
+                    if (best == null || lib < best.getKey().getCardsIn(ZoneType.Library).size()) {
+                        best = e;
+                    }
+                }
+            }
+            if (best == null) {
+                // default: mill the opponent we'd hit hardest
+                best = Collections.max(list.entrySet(), Map.Entry.comparingByValue());
+            }
 
-            sa.getTargets().add(max.getKey());
+            sa.getTargets().add(best.getKey());
         }
         return true;
     }
@@ -209,5 +250,162 @@ public class MillAi extends SpellAbilityAi {
         }
 
         return Math.min(ComputerUtilCost.setMaxXValue(sa, ai, sa.isTrigger()), cardsToDiscard);
+    }
+
+    /**
+     * Decides whether to stop a self-untap mill loop (e.g. Eater of the Dead + Phenax
+     * tap-mill grant). The combo is self-fueling: each cycle mills `t` cards into the
+     * target's graveyard; some fraction of those are creatures, which become new fuel for
+     * the next untap. Net fuel change per cycle is roughly `t × r − 1`, where `r` is the
+     * creature density of the target library (~0.25 for a typical Commander deck, often
+     * higher for creature-based decks).
+     *
+     * If `t × r ≥ 1` the loop self-sustains — we let it run as long as any fuel exists.
+     * If `t × r < 1` we compute how many cycles the fuel buys and check whether that's
+     * enough to deck the target. Otherwise we cap activations to preserve wall clock.
+     */
+    private static boolean wouldLoopOnSelfUntap(final Player ai, final SpellAbility sa) {
+        final Card host = sa.getHostCard();
+        if (host == null) return false;
+
+        SpellAbility untapLoop = null;
+        for (SpellAbility other : host.getAllSpellAbilities()) {
+            if (other == sa) continue;
+            if (other.getPayCosts() == null || !other.getPayCosts().isAbility()) continue;
+            if (!"0".equals(other.getPayCosts().toString().trim())) continue;
+            SpellAbility cur = other;
+            while (cur != null) {
+                if ("Untap".equals(cur.getApi() == null ? null : cur.getApi().name())
+                        && "Self".equals(cur.getParam("Defined"))) {
+                    untapLoop = other;
+                    break;
+                }
+                cur = cur.getSubAbility();
+            }
+            if (untapLoop != null) break;
+        }
+        if (untapLoop == null) return false;
+
+        final int millPerCycle = Math.max(0, host.getNetToughness());
+        if (millPerCycle <= 0) return sa.getActivationsThisTurn() >= 3;
+
+        // Current fuel: cards in graveyards matching the untap ability's ValidTgts.
+        int fuel = Integer.MAX_VALUE;
+        final String validTgts = untapLoop.getParam("ValidTgts");
+        final String origin = untapLoop.getParam("Origin");
+        final boolean fuelIsCreature = validTgts != null && validTgts.contains("Creature");
+        if ("Graveyard".equals(origin) && validTgts != null) {
+            fuel = 0;
+            for (Player p : ai.getGame().getPlayers()) {
+                for (Card c : p.getCardsIn(ZoneType.Graveyard)) {
+                    if (fuelIsCreature && c.isCreature()) fuel++;
+                    else if (validTgts.contains("Card")) fuel++;
+                }
+            }
+        }
+
+        if (fuel <= 0) return true; // no fuel, nothing the loop can do right now
+
+        // Estimate fuel density in the target library (creature fraction). We can't see the
+        // library, but we can infer from visible zones on the assumption decks are roughly
+        // homogeneous: combine (graveyard creatures + battlefield creatures + hand size / 4)
+        // against total cards the opponent has encountered. Default to 0.25 if unknown.
+        if (sa.usesTargeting() && !sa.getTargets().isEmpty()) {
+            for (final Player tgt : sa.getTargets().getTargetPlayers()) {
+                final int lib = tgt.getCardsIn(ZoneType.Library).size();
+                if (lib <= millPerCycle) return false; // one more cycle decks them — go
+
+                final double density = estimateFuelDensity(tgt, fuelIsCreature);
+                final double netPerCycle = millPerCycle * density - 1.0;
+
+                if (netPerCycle >= 0) {
+                    // Self-sustaining — as long as we have any fuel, the loop runs to target=0.
+                    return false;
+                }
+
+                // Fuel depletes. Cycles available before fuel hits 0:
+                //   F + N*(t*r - 1) >= 0  =>  N <= F / (1 - t*r)
+                double cyclesAvailable = fuel / (1.0 - netPerCycle * -1.0);
+                // Additional cycles from compounding (approximate): integrate growing grave.
+                // Each cycle adds millPerCycle * density creatures and spends 1 fuel, so the
+                // effective additional cycles from those compounded gains add N * density * t / 1
+                // — expressed more carefully: we can keep going while fuel(n) > 0. Solve geom:
+                double cardsMilled = cyclesAvailable * millPerCycle;
+                if (cardsMilled >= lib) return false;
+            }
+        }
+
+        // Can't finish the kill from current fuel + density — cap to preserve clock.
+        return sa.getActivationsThisTurn() >= 3;
+    }
+
+    private static double estimateFuelDensity(final Player target, final boolean fuelIsCreature) {
+        if (!fuelIsCreature) return 1.0; // any-card fuel: every milled card refuels
+        int visibleCards = 0;
+        int visibleCreatures = 0;
+        for (ZoneType z : new ZoneType[] { ZoneType.Battlefield, ZoneType.Graveyard, ZoneType.Exile }) {
+            for (Card c : target.getCardsIn(z)) {
+                visibleCards++;
+                if (c.isCreature()) visibleCreatures++;
+            }
+        }
+        if (visibleCards < 10) return 0.25; // too little info, use Commander default
+        return Math.max(0.1, Math.min(0.6, (double) visibleCreatures / visibleCards));
+    }
+
+    /**
+     * Returns true if it's safe to tap this wall/defender during our MAIN2 to mill, rather than
+     * holding it as a blocker. Walls tapped in MAIN2 stay tapped through all opponents' turns in
+     * multiplayer — losing that blocking is only acceptable when we aren't under credible
+     * combat pressure or still have other defenders.
+     */
+    private static boolean safeToTapBlockerForMill(final Player ai, final Card self) {
+        int oppPressure = 0;
+        for (final Player opp : ai.getOpponents()) {
+            for (final Card c : opp.getCreaturesInPlay()) {
+                if (c.hasKeyword(Keyword.DEFENDER) && !c.hasKeyword("CARDNAME can attack as though it didn't have defender.")) {
+                    continue;
+                }
+                if (c.isTapped() && !c.hasKeyword(Keyword.VIGILANCE)) {
+                    // tapped attackers won't hit us this cycle; lightly count them
+                    oppPressure += Math.max(0, c.getNetPower()) / 2;
+                } else {
+                    oppPressure += Math.max(0, c.getNetPower());
+                }
+            }
+        }
+
+        if (oppPressure == 0) {
+            return true; // no threats — free to tap everything
+        }
+
+        // Count how much blocking we retain if we tap this one away. Summoning-sick creatures
+        // can still block — sickness only restricts attacking and activating tap costs — so they
+        // count toward remaining defense.
+        int remainingToughness = 0;
+        int remainingBlockers = 0;
+        for (final Card c : ai.getCreaturesInPlay()) {
+            if (c == self) {
+                continue;
+            }
+            if (c.isTapped()) {
+                continue;
+            }
+            if (c.hasKeyword("CARDNAME can't block.")) {
+                continue;
+            }
+            remainingToughness += Math.max(0, c.getNetToughness());
+            remainingBlockers++;
+        }
+
+        // Safe if we can still absorb the incoming pressure, or if life is high enough to
+        // weather a round of damage even without this blocker.
+        if (remainingToughness >= oppPressure) {
+            return true;
+        }
+        if (remainingBlockers >= 2 && ai.getLife() > oppPressure + 10) {
+            return true;
+        }
+        return false;
     }
 }

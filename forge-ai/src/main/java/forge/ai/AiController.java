@@ -407,6 +407,25 @@ public class AiController {
         return spellAbility;
     }
 
+    /**
+     * The "enough lands" threshold used by filterLandsToPlay. The vanilla heuristic caps at
+     * max(highest CMC in hand, 6), which under-counts in commander-style games where the most
+     * impactful spell lives in the command zone and activations want headroom past the
+     * commander's base cost. Include the commander's CMC + tax + a small activation buffer so
+     * a 5-CMC commander doesn't cause the AI to stop laying lands at 6.
+     */
+    private int computeLandPlayCap(int maxCmcInHand) {
+        int maxCmcCmd = 0;
+        for (Card c : player.getCardsIn(ZoneType.Command)) {
+            if (c.isCommander()) {
+                int tax = player.getCommanderCast(c) * 2;
+                maxCmcCmd = Math.max(maxCmcCmd, c.getCMC() + tax);
+            }
+        }
+        int cmdTarget = maxCmcCmd > 0 ? maxCmcCmd + 2 : 0;
+        return Math.max(Math.max(maxCmcInHand, cmdTarget), 6);
+    }
+
     private CardCollection filterLandsToPlay(CardCollection landList) {
         final CardCollectionView hand = player.getCardsIn(ZoneType.Hand);
         CardCollection nonLandList = CardLists.filter(hand, CardPredicates.NON_LANDS);
@@ -417,7 +436,7 @@ public class AiController {
             allCards.addAll(player.getCardsIn(ZoneType.Command));
             allCards.addAll(cardsInPlay);
             int maxCmcInHand = Aggregates.max(hand, Card::getCMC);
-            int max = Math.max(maxCmcInHand, 6);
+            int max = computeLandPlayCap(maxCmcInHand);
             // consider not playing lands if there are enough already and an ability with a discard cost is present
             if (landsInPlay.size() + landList.size() > max) {
                 for (Card c : allCards) {
@@ -450,7 +469,7 @@ public class AiController {
             lands = CardLists.filter(lands, CardPredicates.LANDS);
             int maxCmcInHand = Aggregates.max(hand1, Card::getCMC);
 
-            if (lands.size() >= Math.max(maxCmcInHand, 6)) {
+            if (lands.size() >= computeLandPlayCap(maxCmcInHand)) {
                 // don't play MDFC land if other side is spell and enough lands are available
                 if (!c.isLand() || (c.isModal() && !c.getState(CardStateName.Backside).getType().isLand())) {
                     return false;
@@ -1354,6 +1373,15 @@ public class AiController {
     }
 
     public List<SpellAbility> chooseSpellAbilityToPlay() {
+        // Auto-yield: if another player has been hammering the same SA repeatedly and we've
+        // passed on each iteration (implicit — the detector wouldn't still be counting
+        // otherwise), pass again without burning full-evaluation cycles on priority. This is
+        // what a human player does at a competitive level — they yield to a known loop once
+        // they've decided not to respond.
+        if (game.getLoopDetector().shouldAutoYield(player)) {
+            return null;
+        }
+
         AiCache.clear();
         // Reset cached predicted combat, as it may be stale. It will be
         // re-created if needed and used for any AI logic that needs it.

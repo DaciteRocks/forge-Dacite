@@ -2,4 +2,6 @@ Name:Sol Ring
 ManaCost:1
 Types:Artifact
 A:AB$ Mana | Cost$ T | Produced$ C | Amount$ 2 | SpellDescription$ Add {C}{C}.
+SVar:PlayMain1:ALWAYS
+SVar:AIPriorityModifier:20
 Oracle:{T}: Add {C}{C}.

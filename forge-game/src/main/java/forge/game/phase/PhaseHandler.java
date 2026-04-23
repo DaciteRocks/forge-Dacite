@@ -151,6 +151,10 @@ public class PhaseHandler implements java.io.Serializable, IHasForgeLog {
         boolean isTopsy = playerTurn.isPhasesReversed();
         boolean turnEnded = false;
 
+        // Phase boundaries invalidate any in-progress loop pattern — new phase may surface
+        // new priority decisions for opponents.
+        game.getLoopDetector().reset();
+
         game.getStack().clearUndoStack(); //can't undo action from previous phase
 
         if (bRepeatCleanup) { // for when Cleanup needs to repeat itself
@@ -1072,6 +1076,15 @@ public class PhaseHandler implements java.io.Serializable, IHasForgeLog {
                 }
                 if (DEBUG_PHASES) {
                     System.out.print("... " + pPlayerPriority + " plays " + chosenSa);
+                }
+
+                // Track repeat activations for loop auto-yield. Only meaningful when one
+                // SA is being activated — if multiple are played together (land + spell),
+                // that's not a simple repeat loop and we should reset the detector.
+                if (chosenSa.size() == 1) {
+                    game.getLoopDetector().recordActivation(pPlayerPriority, chosenSa.get(0));
+                } else {
+                    game.getLoopDetector().reset();
                 }
 
                 boolean rollback = false;

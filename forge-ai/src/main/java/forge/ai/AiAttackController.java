@@ -207,14 +207,36 @@ public class AiAttackController {
         // TODO for multiplayer combat avoid players with cantLose or (if not playing infect) cantLoseForZeroOrLessLife and !canLoseLife
 
         if (defender.getLife() > 8) {
-            // TODO connect with evaluateBoardPosition and only fall back to random when no player is the biggest threat by a fair margin
-
+            // In multiplayer, pick the biggest *threat* rather than a random opponent. Threat =
+            // board power + tempo signals (monarch/initiative) + commander presence. This keeps
+            // the AI from ganging on one player by accident but also stops it from wasting attacks
+            // on a durdling opponent while someone else is about to win.
             List<Player> opps = Lists.newArrayList(ai.getOpponents());
+            if (opps.isEmpty()) return defender;
+
+            // Score each opponent and pick highest
+            Player best = null;
+            int bestScore = Integer.MIN_VALUE;
+            int secondScore = Integer.MIN_VALUE;
+            for (Player p : opps) {
+                int score = scoreOpponentThreat(ai, p, forCombatDmg);
+                if (score > bestScore) {
+                    secondScore = bestScore;
+                    bestScore = score;
+                    best = p;
+                } else if (score > secondScore) {
+                    secondScore = score;
+                }
+            }
+
+            // If the biggest threat clearly stands out, attack them. Otherwise fall back to the
+            // old random pick so we don't over-focus when the table is balanced.
+            if (best != null && bestScore - secondScore >= 6) {
+                return best;
+            }
             if (forCombatDmg) {
                 for (Player p : ai.getOpponents()) {
                     if (p.isMonarch() && ai.canBecomeMonarch()) {
-                        // just increase the odds for now instead of being fully predictable
-                        // as it could lead to other too complex factors giving this reasoning negative impact
                         opps.add(p);
                     }
                     if (p.hasInitiative()) {
@@ -222,13 +244,41 @@ public class AiAttackController {
                     }
                 }
             }
-
-            // TODO should we cache the random for each turn? some functions like shouldPumpCard base their decisions on the assumption who will be attacked
-
-            //Otherwise choose a random opponent to ensure no ganging up on players
             return Aggregates.random(opps);
         }
         return defender;
+    }
+
+    private static int scoreOpponentThreat(Player ai, Player opp, boolean forCombatDmg) {
+        int score = 0;
+        // Board power is the single biggest predictor of who's about to win.
+        int boardPower = 0;
+        int creatureCount = 0;
+        for (Card c : opp.getCreaturesInPlay()) {
+            boardPower += Math.max(0, c.getNetPower());
+            creatureCount++;
+        }
+        score += boardPower * 2;
+        score += creatureCount;
+
+        // Commander on the field is a high-threat signal in Commander format.
+        for (Card c : opp.getCardsIn(ZoneType.Battlefield)) {
+            if (c.isCommander()) score += 6;
+        }
+
+        // Low life means killable — still attractive, but less than crushing a racing board.
+        if (opp.getLife() <= 15) score += (15 - opp.getLife()) / 2;
+
+        // Tempo signals
+        if (forCombatDmg) {
+            if (opp.isMonarch() && ai.canBecomeMonarch()) score += 4;
+            if (opp.hasInitiative()) score += 4;
+        }
+
+        // Large hand = more answers/threats incoming.
+        score += Math.min(4, opp.getCardsIn(ZoneType.Hand).size() / 2);
+
+        return score;
     }
 
     /**

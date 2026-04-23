@@ -84,6 +84,7 @@ public class Game {
     public final MagicStack stack;
     public final CostPaymentStack costPaymentStack = new CostPaymentStack();
     private final PhaseHandler phaseHandler;
+    private final StackLoopDetector loopDetector = new StackLoopDetector();
     private final StaticEffects staticEffects = new StaticEffects();
     private final TriggerHandler triggerHandler = new TriggerHandler(this);
     private final ReplacementHandler replacementHandler = new ReplacementHandler(this);
@@ -461,6 +462,9 @@ public class Game {
     }
     public final PhaseHandler getPhaseHandler() {
         return phaseHandler;
+    }
+    public final StackLoopDetector getLoopDetector() {
+        return loopDetector;
     }
 
     public final void updateTurnForView() {

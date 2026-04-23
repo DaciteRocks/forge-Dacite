@@ -13,6 +13,7 @@ import forge.deck.DeckGroup;
 import forge.deck.io.DeckSerializer;
 import forge.game.Game;
 import forge.game.GameEndReason;
+import forge.game.GameLog;
 import forge.game.GameLogEntry;
 import forge.game.GameLogEntryType;
 import forge.game.GameRules;
@@ -81,6 +82,32 @@ public class SimulateMatch {
 
         boolean outputGamelog = !params.containsKey("q");
 
+        boolean liveLog = params.containsKey("L") || params.containsKey("-live-log");
+        Set<GameLogEntryType> liveLogTypeFilter = null;
+        if (params.containsKey("-live-log-types")) {
+            liveLog = true;
+            List<String> vals = params.get("-live-log-types");
+            if (vals != null && !vals.isEmpty()) {
+                liveLogTypeFilter = EnumSet.noneOf(GameLogEntryType.class);
+                for (String v : vals) {
+                    for (String name : v.split(",")) {
+                        name = name.trim();
+                        if (name.isEmpty()) {
+                            continue;
+                        }
+                        try {
+                            liveLogTypeFilter.add(GameLogEntryType.valueOf(name.toUpperCase()));
+                        } catch (IllegalArgumentException e) {
+                            System.err.println("Unknown --live-log-types value ignored: " + name);
+                        }
+                    }
+                }
+                if (liveLogTypeFilter.isEmpty()) {
+                    liveLogTypeFilter = null;
+                }
+            }
+        }
+
         GameType type = GameType.Constructed;
         if (params.containsKey("f")) {
             type = GameType.valueOf(WordUtil.capitalize(params.get("f").get(0)));
@@ -94,7 +121,7 @@ public class SimulateMatch {
         }
 
         if (params.containsKey("t")) {
-            simulateTournament(params, rules, outputGamelog);
+            simulateTournament(params, rules, outputGamelog, liveLog, liveLogTypeFilter);
             System.out.flush();
             return;
         }
@@ -144,12 +171,12 @@ public class SimulateMatch {
             int iGame = 0;
             while (!mc.isMatchOver()) {
                 // play games until the match ends
-                simulateSingleMatch(mc, iGame, outputGamelog);
+                simulateSingleMatch(mc, iGame, outputGamelog, liveLog, liveLogTypeFilter);
                 iGame++;
             }
         } else {
             for (int iGame = 0; iGame < nGames; iGame++) {
-                simulateSingleMatch(mc, iGame, outputGamelog);
+                simulateSingleMatch(mc, iGame, outputGamelog, liveLog, liveLogTypeFilter);
             }
         }
 
@@ -157,7 +184,7 @@ public class SimulateMatch {
     }
 
     private static void argumentHelp() {
-        System.out.println("Syntax: forge.exe sim -d <deck1[.dck]> ... <deckX[.dck]> -D [D] -n [N] -m [M] -t [T] -p [P] -f [F] -q");
+        System.out.println("Syntax: forge.exe sim -d <deck1[.dck]> ... <deckX[.dck]> -D [D] -n [N] -m [M] -t [T] -p [P] -f [F] -q [-L|--live-log] [--live-log-types <CSV>]");
         System.out.println("\tsim - stands for simulation mode");
         System.out.println("\tdeck1 (or deck2,...,X) - constructed deck name or filename (has to be quoted when contains multiple words)");
         System.out.println("\tdeck is treated as file if it ends with a dot followed by three numbers or letters");
@@ -169,13 +196,42 @@ public class SimulateMatch {
         System.out.println("\tF - format of games, defaults to constructed");
         System.out.println("\tc - Clock flag. Set the maximum time in seconds before calling the match a draw, defaults to 120.");
         System.out.println("\tq - Quiet flag. Output just the game result, not the entire game log.");
+        System.out.println("\t-L or --live-log - Stream each game log entry to stdout as it happens. Suppresses the end-of-game log dump to avoid duplicates; the 'Game Result:' line is still printed.");
+        System.out.println("\t--live-log-types <CSV> - Comma-separated GameLogEntryType names that filter the live-log stream (implies --live-log). Example: TURN,COMBAT,DAMAGE,GAME_OUTCOME");
     }
 
     public static void simulateSingleMatch(final Match mc, int iGame, boolean outputGamelog) {
+        simulateSingleMatch(mc, iGame, outputGamelog, false, null);
+    }
+
+    public static void simulateSingleMatch(final Match mc, int iGame, boolean outputGamelog,
+            boolean liveLog, Set<GameLogEntryType> liveLogTypeFilter) {
         final StopWatch sw = new StopWatch();
         sw.start();
 
         final Game g1 = mc.createGame();
+
+        if (liveLog) {
+            // GameLog.notifyObservers() is called with no argument, so we can't key off the
+            // observer's `arg`. Instead, track how many entries have been printed and emit
+            // anything new (chronologically) each time the log fires.
+            final int[] printed = {0};
+            final GameLog gameLog = g1.getGameLog();
+            final Set<GameLogEntryType> filter = liveLogTypeFilter;
+            gameLog.addObserver((obs, arg) -> {
+                List<GameLogEntry> entries = gameLog.getLogEntries(null); // newest-first
+                int total = entries.size();
+                for (int idx = total - printed[0] - 1; idx >= 0; idx--) {
+                    GameLogEntry entry = entries.get(idx);
+                    if (filter == null || filter.contains(entry.type())) {
+                        System.out.println(entry);
+                    }
+                }
+                printed[0] = total;
+                System.out.flush();
+            });
+        }
+
         // will run match in the same thread
         try {
             TimeLimitedCodeBlock.runWithTimeout(() -> {
@@ -195,15 +251,17 @@ public class SimulateMatch {
             }
         }
 
-        List<GameLogEntry> log;
-        if (outputGamelog) {
-            log = g1.getGameLog().getLogEntries(null);
-        } else {
-            log = g1.getGameLog().getLogEntries(GameLogEntryType.MATCH_RESULTS);
-        }
-        Collections.reverse(log);
-        for (GameLogEntry l : log) {
-            System.out.println(l);
+        if (!liveLog) {
+            List<GameLogEntry> log;
+            if (outputGamelog) {
+                log = g1.getGameLog().getLogEntries(null);
+            } else {
+                log = g1.getGameLog().getLogEntries(GameLogEntryType.MATCH_RESULTS);
+            }
+            Collections.reverse(log);
+            for (GameLogEntry l : log) {
+                System.out.println(l);
+            }
         }
 
         // If both players life totals to 0 in a single turn, the game should end in a draw
@@ -214,7 +272,8 @@ public class SimulateMatch {
         }
     }
 
-    private static void simulateTournament(Map<String, List<String>> params, GameRules rules, boolean outputGamelog) {
+    private static void simulateTournament(Map<String, List<String>> params, GameRules rules, boolean outputGamelog,
+            boolean liveLog, Set<GameLogEntryType> liveLogTypeFilter) {
         String tournament = params.get("t").get(0);
         AbstractTournament tourney = null;
         int matchPlayers = params.containsKey("p") ? Integer.parseInt(params.get("p").get(0)) : 2;
@@ -310,7 +369,7 @@ public class SimulateMatch {
                 while (!mc.isMatchOver()) {
                     // play games until the match ends
                     try {
-                        simulateSingleMatch(mc, iGame, outputGamelog);
+                        simulateSingleMatch(mc, iGame, outputGamelog, liveLog, liveLogTypeFilter);
                         iGame++;
                     } catch (Exception e) {
                         exceptions++;

@@ -10,6 +10,7 @@ import forge.game.keyword.Keyword;
 import forge.game.phase.PhaseType;
 import forge.game.player.Player;
 import forge.game.spellability.SpellAbility;
+import forge.game.staticability.StaticAbility;
 import forge.game.zone.ZoneType;
 import forge.util.collect.FCollectionView;
 
@@ -75,6 +76,22 @@ public class DestroyAllAi extends SpellAbilityAi {
             ailist = CardLists.filter(ailist, predicate);
             if (opplist.isEmpty()) {
                 return new AiAbilityDecision(0, AiPlayDecision.CantPlayAi);
+            }
+
+            // If we're running a deck with a tap-mill grant engine (e.g. Phenax, God of Deception)
+            // AND we'd be destroying at least two of our own creatures that benefit from the
+            // grant, refuse — our creatures ARE our mill engine. The standard creature-value
+            // comparison below doesn't see the synergy since the grant doesn't pump power/toughness.
+            if (ailist.size() >= 2 && aiHasTapMillGrant(ai)) {
+                int ourGrantable = 0;
+                for (final Card c : ailist) {
+                    if (c.isCreature()) {
+                        ourGrantable++;
+                    }
+                }
+                if (ourGrantable >= 2) {
+                    return new AiAbilityDecision(0, AiPlayDecision.CantPlayAi);
+                }
             }
 
             if (sa.usesTargeting()) {
@@ -171,6 +188,51 @@ public class DestroyAllAi extends SpellAbilityAi {
         return new AiAbilityDecision(0, AiPlayDecision.CantPlayAi);
     }
     
+
+    /**
+     * True if {@code ai} is playing a deck built around a permanent that grants a tap-mill
+     * activated ability to creatures (Phenax, God of Deception is the canonical example).
+     * Checks the battlefield AND the command zone / hand / library — the grant may not be in
+     * play yet at wipe-decision time, but if the commander or a card elsewhere in the deck
+     * provides it, destroying our own creatures undermines the whole plan.
+     */
+    private static boolean aiHasTapMillGrant(final Player ai) {
+        if (scanForTapMillGrant(ai.getCardsIn(ZoneType.Battlefield))) {
+            return true;
+        }
+        if (scanForTapMillGrant(ai.getCardsIn(ZoneType.Command))) {
+            return true;
+        }
+        if (scanForTapMillGrant(ai.getCardsIn(ZoneType.Hand))) {
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean scanForTapMillGrant(final Iterable<Card> cards) {
+        for (final Card perm : cards) {
+            for (final StaticAbility stAb : perm.getStaticAbilities()) {
+                if (!"Continuous".equalsIgnoreCase(stAb.getParam("Mode"))) {
+                    continue;
+                }
+                final String addAbility = stAb.getParam("AddAbility");
+                if (addAbility == null) {
+                    continue;
+                }
+                final String affected = stAb.getParam("Affected");
+                if (affected == null || !affected.contains("Creature")) {
+                    continue;
+                }
+                for (final String abKey : addAbility.split(" & ")) {
+                    final String abDef = perm.getSVar(abKey);
+                    if (abDef != null && abDef.contains("AB$ Mill") && abDef.contains("Cost$ T")) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
 
     @Override
     public boolean willPayUnlessCost(Player payer, SpellAbility sa, Cost cost, boolean alreadyPaid, FCollectionView<Player> payers) {

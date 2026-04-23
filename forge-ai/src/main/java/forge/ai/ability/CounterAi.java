@@ -215,6 +215,12 @@ public class CounterAi extends SpellAbilityAi {
             }
         }
 
+        // Force-counter if the spell would remove our commander or a high-value engine permanent
+        // (e.g. Phenax, God of Deception). Losing these usually ends a mill/toolbox strategy.
+        if (dontCounter && tgtSA != null && spellTargetsCriticalOwnedPermanent(ai, tgtSA)) {
+            dontCounter = false;
+        }
+
         if (dontCounter) {
             return new AiAbilityDecision(0, AiPlayDecision.CantPlayAi);
         }
@@ -225,6 +231,50 @@ public class CounterAi extends SpellAbilityAi {
     @Override
     public AiAbilityDecision chkDrawback(Player aiPlayer, SpellAbility sa) {
         return doTriggerNoCost(aiPlayer, sa, true);
+    }
+
+    /**
+     * True if {@code tgtSA} is a removal-style effect targeting a permanent we control that
+     * we'd almost always want to protect (our commander, or any permanent whose static ability
+     * grants a tap-mill activated ability to our creatures — Phenax and similar engines).
+     */
+    private static boolean spellTargetsCriticalOwnedPermanent(final Player ai, final SpellAbility tgtSA) {
+        if (tgtSA == null || !tgtSA.usesTargeting()) {
+            return false;
+        }
+        final ApiType api = tgtSA.getApi();
+        final boolean isRemoval = api == ApiType.Destroy || api == ApiType.DestroyAll
+                || api == ApiType.ChangeZone || api == ApiType.ChangeZoneAll
+                || api == ApiType.Sacrifice || api == ApiType.SacrificeAll
+                || api == ApiType.Attach || api == ApiType.GainControl
+                || api == ApiType.Pump || api == ApiType.DealDamage;
+        if (!isRemoval) {
+            return false;
+        }
+        for (final Card tgt : tgtSA.getTargets().getTargetCards()) {
+            if (tgt == null || tgt.getController() != ai) {
+                continue;
+            }
+            if (tgt.isCommander()) {
+                return true;
+            }
+            for (final forge.game.staticability.StaticAbility stAb : tgt.getStaticAbilities()) {
+                if (!"Continuous".equalsIgnoreCase(stAb.getParam("Mode"))) {
+                    continue;
+                }
+                final String addAbility = stAb.getParam("AddAbility");
+                if (addAbility == null) {
+                    continue;
+                }
+                for (final String abKey : addAbility.split(" & ")) {
+                    final String abDef = tgt.getSVar(abKey);
+                    if (abDef != null && abDef.contains("AB$ Mill") && abDef.contains("Cost$ T")) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     @Override
