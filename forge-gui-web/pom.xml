@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <artifactId>forge</artifactId>
+        <groupId>forge</groupId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>forge-gui-web</artifactId>
+    <packaging>jar</packaging>
+    <name>Forge GUI Web</name>
+    <description>
+        Browser-based thin client for Forge. Runs a WebSocket + static-file host in the JVM and
+        implements IGuiGame (WebGuiGame) as a sibling of the network client's RemoteClientGuiGame,
+        streaming game state to the browser as JSON. The rules engine runs unchanged on the host;
+        the browser is a dumb renderer. See docs/Development/Web-Client-Spec.md.
+    </description>
+
+    <dependencies>
+        <!-- Forge GUI layer: pulls in forge-ai -> forge-game -> forge-core,
+             plus the net protocol (ProtocolMethod), the View model, and game-mode logic. -->
+        <dependency>
+            <groupId>forge</groupId>
+            <artifactId>forge-gui</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Embedded HTTP + WebSocket host (bundles Jetty). -->
+        <dependency>
+            <groupId>io.javalin</groupId>
+            <artifactId>javalin</artifactId>
+            <version>6.3.0</version>
+        </dependency>
+
+        <!-- JSON encode/decode for the game protocol. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.17.2</version>
+        </dependency>
+
+        <!-- SLF4J simple binding so Javalin/Jetty logging has an implementation at runtime. -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>2.0.13</version>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+</project>
