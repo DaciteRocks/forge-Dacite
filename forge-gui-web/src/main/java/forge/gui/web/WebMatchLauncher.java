@@ -1,5 +1,9 @@
 package forge.gui.web;
 
+import forge.gui.GuiBase;
+import forge.localinstance.properties.ForgePreferences.FPref;
+import forge.model.FModel;
+
 /**
  * Phase 0 entry point. Starts the web host; when a browser connects, it creates a {@link WebGuiGame}
  * for that session and (TODO) starts a Commander-vs-AI match with that GUI in the human seat.
@@ -33,8 +37,20 @@ public final class WebMatchLauncher {
     public static void main(final String[] args) {
         final int port = args.length > 0 ? Integer.parseInt(args[0]) : DEFAULT_PORT;
 
+        // Install the headless GUI base and load card data (blocks until the DB is ready).
+        final WebGuiBase guiBase = new WebGuiBase();
+        GuiBase.setInterface(guiBase);
+        System.out.println("[web] initializing Forge (loading card data)...");
+        FModel.initialize(null, preferences -> {
+            preferences.setPref(FPref.LOAD_CARD_SCRIPTS_LAZILY, false);
+            preferences.setPref(FPref.UI_LANGUAGE, "en-US");
+            return null;
+        });
+        System.out.println("[web] Forge initialized.");
+
         final WebServer server = new WebServer(port);
         server.setOnConnect(session -> {
+            guiBase.setActiveSession(session);
             final WebGuiGame gui = new WebGuiGame(session);
             System.out.println("[web] session ready; WebGuiGame created for the human seat.");
             startCommanderVsAi(gui);
