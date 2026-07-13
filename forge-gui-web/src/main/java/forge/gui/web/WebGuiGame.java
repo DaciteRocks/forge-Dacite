@@ -16,6 +16,7 @@ import forge.game.zone.ZoneType;
 import forge.gamemodes.match.NextGameDecision;
 import forge.gamemodes.net.NetworkGuiGame;
 import forge.gui.FThreads;
+import forge.gui.web.dto.CardViewDto;
 import forge.gui.web.dto.GameViewDto;
 import forge.interfaces.IGameController;
 import forge.item.PaperCard;
@@ -602,7 +603,7 @@ public final class WebGuiGame extends NetworkGuiGame {
         final Map<String, Object> payload = new HashMap<>();
         payload.put("title", title);
         payload.put("optional", isOptional);
-        payload.put("options", WebDialogs.options(entityLabels(optionList)));
+        payload.put("options", entityOptions(optionList));
 
         final int idx = WebDialogs.replyIndex(ask("chooseEntity", payload));
         if (idx >= 0 && idx < optionList.size()) {
@@ -622,7 +623,7 @@ public final class WebGuiGame extends NetworkGuiGame {
         payload.put("title", title);
         payload.put("min", min);
         payload.put("max", max);
-        payload.put("options", WebDialogs.options(entityLabels(optionList)));
+        payload.put("options", entityOptions(optionList));
 
         final JsonNode reply = ask("chooseEntities", payload);
         for (final int i : WebDialogs.sanitizeSelection(WebDialogs.replyIndices(reply), min, optionList.size())) {
@@ -782,14 +783,25 @@ public final class WebGuiGame extends NetworkGuiGame {
         return sourceChoices;
     }
 
-    private static List<String> entityLabels(final List<? extends GameEntityView> list) {
-        final List<String> labels = new ArrayList<>();
-        if (list != null) {
-            for (final GameEntityView e : list) {
-                labels.add(e != null ? e.getName() : "?");
-            }
+    /** Build choice options carrying each entity's label AND, for cards, its CardViewDto so the
+     * browser can show full card detail on long-press (e.g. when searching the library). */
+    private List<Map<String, Object>> entityOptions(final List<? extends GameEntityView> list) {
+        final List<Map<String, Object>> out = new ArrayList<>();
+        if (list == null) {
+            return out;
         }
-        return labels;
+        final Iterable<PlayerView> viewers = getLocalPlayers();
+        for (int i = 0; i < list.size(); i++) {
+            final GameEntityView e = list.get(i);
+            final Map<String, Object> o = new HashMap<>();
+            o.put("index", i);
+            o.put("label", e != null ? e.getName() : "?");
+            if (e instanceof CardView) {
+                o.put("card", CardViewDto.from((CardView) e, viewers));
+            }
+            out.add(o);
+        }
+        return out;
     }
 
     private static <T> List<String> genericLabels(final List<T> choices, final FSerializableFunction<T, String> display) {

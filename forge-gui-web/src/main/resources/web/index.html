@@ -7,7 +7,10 @@
   <style>
     :root { --bg:#14181f; --panel:#1e2530; --line:#2c3542; --text:#e6e9ee; --muted:#8b94a3; --accent:#4aa3ff; }
     * { box-sizing:border-box; }
-    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, sans-serif; }
+    /* Stop long-press from selecting text / raising the iOS callout on tappable elements. */
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 system-ui, sans-serif;
+           -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
+    input, textarea, .detail-text { -webkit-user-select:text; user-select:text; }
     header { padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:baseline; position:sticky; top:0; }
     header .turn { color:var(--muted); }
     #status { margin-left:auto; font-size:12px; color:var(--muted); }
@@ -51,6 +54,10 @@
     .pip.B{background:#3a3540;color:#e6e0ec;} .pip.R{background:#f0b8ac;color:#3a0f08;}
     .pip.G{background:#b7d9b4;color:#0e2a10;} .pip.C{background:#cdd3da;color:#1a2028;}
     .mana, .pctrs { display:inline-flex; gap:4px; align-items:center; }
+    #manabar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:8px 14px; border-bottom:1px solid var(--line); background:#131a24; }
+    #manabar .mb-label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+    #manabar .mb-empty { font-size:12px; color:var(--muted); }
+    #manabar .pip { font-size:15px; padding:4px 9px; }
     .stack { margin:10px 14px; }
     .stack .item { border:1px solid var(--accent); border-radius:8px; padding:6px 10px; margin-bottom:6px; background:#101a28; }
     .combat { margin:10px 14px; }
@@ -60,7 +67,10 @@
     .count { color:var(--muted); font-size:12px; }
     #modal { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; padding:20px; }
     #modal.show { display:flex; }
-    .dialog { background:var(--panel); border:1px solid var(--line); border-radius:12px; max-width:420px; width:100%; padding:16px; }
+    #modal { overflow:auto; }
+    .dialog { background:var(--panel); border:1px solid var(--line); border-radius:12px; max-width:420px; width:100%; padding:16px; max-height:88vh; overflow-y:auto; overscroll-behavior:contain; }
+    .dialog .search { position:sticky; top:0; }
+    .dialog .optlist { max-height:60vh; overflow-y:auto; overscroll-behavior:contain; }
     .dialog h3 { margin:0 0 10px; }
     .dialog .opt { display:block; width:100%; text-align:left; background:#222d3b; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
     .dialog .opt:active { filter:brightness(1.25); }
@@ -105,6 +115,7 @@
   <div id="prompt"></div>
   <div id="buttons"></div>
   <div id="actionbar"></div>
+  <div id="manabar"></div>
   <div id="stackWrap"></div>
   <div id="combatWrap"></div>
   <div id="players"></div>

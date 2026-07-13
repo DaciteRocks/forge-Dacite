@@ -13,6 +13,7 @@
   var promptEl = document.getElementById("prompt");
   var buttonsEl = document.getElementById("buttons");
   var actionbarEl = document.getElementById("actionbar");
+  var manabarEl = document.getElementById("manabar");
   var stackWrap = document.getElementById("stackWrap");
   var combatWrap = document.getElementById("combatWrap");
   var playersEl = document.getElementById("players");
@@ -113,6 +114,7 @@
     });
     renderStack(g.stack);
     renderCombat(g.combat);
+    renderManaBar(g);
 
     playersEl.innerHTML = "";
     (g.players || []).forEach(function (p) {
@@ -135,9 +137,22 @@
     var sd = el("div", "stack");
     sd.appendChild(el("h3", "", "Stack"));
     stack.forEach(function (it) {
-      sd.appendChild(el("div", "item", it.text || ("#" + it.id)));
+      var item = el("div", "item", it.text || ("#" + it.id));
+      if (it.card) { item.onclick = function () { showCardDetail(it.card); }; } // tap to read the card
+      sd.appendChild(item);
     });
     stackWrap.appendChild(sd);
+  }
+
+  // A prominent, always-visible mana pool for you: tap a pip to spend that mana on the current cost.
+  function renderManaBar(g) {
+    manabarEl.innerHTML = "";
+    var me = (g.players || []).filter(function (p) { return mySeatIds.indexOf(p.id) >= 0; })[0];
+    if (!me) { return; }
+    manabarEl.appendChild(el("span", "mb-label", "Mana pool:"));
+    var pips = me.manaPool ? manaPips(me.manaPool, true) : null;
+    if (pips) { manabarEl.appendChild(pips); }
+    else { manabarEl.appendChild(el("span", "mb-empty", "empty — tap a land to add mana")); }
   }
 
   function renderCombat(combat) {
@@ -224,10 +239,6 @@
     });
     for (var i = cards.length; i < p.handSize; i++) {
       z.appendChild(el("div", "card back", "🂠"));
-    }
-    if (mine && p.manaPool) {
-      var pool = manaPips(p.manaPool, true);
-      if (pool) { z.appendChild(pool); }
     }
     return z;
   }
@@ -443,57 +454,105 @@
     setTimeout(function () { input.focus(); }, 0);
   }
 
-  // Single choice (chooseSingleEntityForEffect). Cancel replies index -1: optional -> null on the
-  // server, mandatory -> the server falls back to the first option, so this is always safe.
+  // Single choice (chooseSingleEntityForEffect — e.g. searching your library). Tap an option to pick
+  // it; long-press to read the card. A search box filters a long list. Cancel replies index -1
+  // (optional -> null on the server; mandatory -> the server falls back to the first option).
   function showChooseEntity(payload, id) {
     var p = payload || {};
-    openSingle(p.title || "Choose", (p.options || []).map(function (o) {
-      return { label: o.label, value: { index: o.index } };
-    }), function (value) { reply(id, value); }, function () { reply(id, { index: -1 }); });
+    var options = p.options || [];
+    var dialog = el("div", "dialog");
+    dialog.appendChild(el("h3", "", p.title || "Choose"));
+    var listWrap = el("div", "optlist");
+    var search = maybeSearch(options, dialog, function () { renderOpts(); });
+    function renderOpts() {
+      var q = search ? search.value.trim().toLowerCase() : "";
+      listWrap.innerHTML = "";
+      options.forEach(function (o) {
+        if (q && (o.label || "").toLowerCase().indexOf(q) < 0) { return; }
+        listWrap.appendChild(optionRow(o, o.label, function () { closeModal(); reply(id, { index: o.index }); }));
+      });
+    }
+    dialog.appendChild(listWrap);
+    dialog.appendChild(optButton("Cancel", function () { reply(id, { index: -1 }); }));
+    renderOpts();
+    showDialog(dialog);
   }
 
-  // Multi-select for getChoices / chooseEntitiesForEffect (min..max). A negative min/max means
-  // "unbounded" — notably reveal() calls getChoices(msg,-1,-1,items) as a pure acknowledgement,
-  // where Confirm must be enabled with nothing selected.
+  // Multi-select for getChoices / chooseEntitiesForEffect (min..max). Negative min/max = unbounded
+  // (reveal() sends -1/-1 as a pure acknowledgement, Confirm enabled at 0). Tap toggles; long-press
+  // reads the card; a search box filters a long list.
   function showMultiSelect(payload, id) {
     var p = payload || {};
     var options = p.options || [];
     var min = (p.min != null && p.min >= 0) ? p.min : 0;
     var max = (p.max != null && p.max >= 0) ? p.max : options.length;
-    // Cap the effective minimum at the number of options so Confirm is always reachable — a
-    // min greater than the option count (server clamps it too) would otherwise never enable.
     var effMin = Math.min(min, options.length);
     var selected = {};
     (p.selected || []).forEach(function (i) { selected[i] = true; });
 
     var dialog = el("div", "dialog");
     dialog.appendChild(el("h3", "", p.message || p.title || "Choose " + min + "–" + max));
-    var confirm = optButton("Confirm", function () {
-      reply(id, { indices: Object.keys(selected).map(Number) });
-    });
-    function label(o) { return (selected[o.index] ? "☑ " : "☐ ") + o.label; }
-    function refresh() {
-      options.forEach(function (o) { o._btn.textContent = label(o); });
+    var confirm = optButton("Confirm", function () { reply(id, { indices: Object.keys(selected).map(Number) }); });
+    function box(o) { return (selected[o.index] ? "☑ " : "☐ ") + o.label; }
+    function refreshConfirm() {
       var n = Object.keys(selected).length;
       confirm.disabled = !(n >= effMin && n <= max);
     }
-    options.forEach(function (o) {
-      var b = plainButton("", function () {
-        if (selected[o.index]) { delete selected[o.index]; }
-        else {
-          if (Object.keys(selected).length >= max) {
-            if (max === 1) { selected = {}; } else { return; }
+    var listWrap = el("div", "optlist");
+    var search = maybeSearch(options, dialog, function () { renderOpts(); });
+    function renderOpts() {
+      var q = search ? search.value.trim().toLowerCase() : "";
+      listWrap.innerHTML = "";
+      options.forEach(function (o) {
+        if (q && (o.label || "").toLowerCase().indexOf(q) < 0) { return; }
+        listWrap.appendChild(optionRow(o, box(o), function () {
+          if (selected[o.index]) { delete selected[o.index]; }
+          else {
+            if (Object.keys(selected).length >= max) { if (max === 1) { selected = {}; } else { return; } }
+            selected[o.index] = true;
           }
-          selected[o.index] = true;
-        }
-        refresh();
+          renderOpts();       // reflect ☑/☐ (and max===1 replacement)
+          refreshConfirm();
+        }));
       });
-      o._btn = b;
-      dialog.appendChild(b);
-    });
+    }
+    dialog.appendChild(listWrap);
     dialog.appendChild(confirm);
-    refresh();
+    renderOpts();
+    refreshConfirm();
     showDialog(dialog);
+  }
+
+  // A choice-option button: tap runs onTap; long-press shows the card's detail (if it carries one).
+  function optionRow(o, labelText, onTap) {
+    var btn = el("button", "opt", labelText);
+    if (o.card) {
+      var timer = null, longPressed = false;
+      function start() { longPressed = false; timer = setTimeout(function () { longPressed = true; showCardDetail(o.card); }, 450); }
+      function cancel() { if (timer) { clearTimeout(timer); timer = null; } }
+      btn.addEventListener("touchstart", start, { passive: true });
+      btn.addEventListener("touchmove", cancel, { passive: true });
+      btn.addEventListener("touchend", function (e) { cancel(); if (longPressed) { e.preventDefault(); } }, { passive: false });
+      btn.addEventListener("mousedown", start);
+      btn.addEventListener("mouseup", cancel);
+      btn.addEventListener("mouseleave", cancel);
+      btn.onclick = function () { if (longPressed) { longPressed = false; return; } onTap(); };
+    } else {
+      btn.onclick = onTap;
+    }
+    return btn;
+  }
+
+  // A search box shown above a long option list; filters on input. Returns null for short lists.
+  function maybeSearch(options, dialog, onChange) {
+    if (!options || options.length <= 6) { return null; }
+    var s = document.createElement("input");
+    s.type = "text";
+    s.placeholder = "Search…";
+    s.className = "search";
+    s.oninput = onChange;
+    dialog.appendChild(s);
+    return s;
   }
 
   // Tap items in the desired order (order()); Confirm enables once all are placed.
