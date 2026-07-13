@@ -101,17 +101,24 @@ public class WebGameBootstrapTest {
             Assert.assertTrue(p.path("librarySize").asInt() > 0, "each player has a dealt library");
             Assert.assertFalse(p.path("name").asText().isEmpty(), "each player has a name");
 
-            // Validate the DTO mapping end-to-end: the commander is a real card with a name and type.
-            final JsonNode commanders = p.path("commanders");
-            Assert.assertTrue(commanders.isArray() && commanders.size() >= 1,
-                    "each Commander player should have at least one commander");
-            for (final JsonNode c : commanders) {
-                Assert.assertFalse(c.path("name").asText().isEmpty(), "commander card has a name");
-                Assert.assertFalse(c.path("type").asText().isEmpty(), "commander card has a type line");
-                sawCommander = true;
+            // Each Commander player has a commander, tracked by id (the client marks it wherever it
+            // is instead of a separate zone).
+            final JsonNode commanderIds = p.path("commanderIds");
+            Assert.assertTrue(commanderIds.isArray() && commanderIds.size() >= 1,
+                    "each Commander player should have at least one commander id");
+
+            // Validate CardViewDto mapping end-to-end on the command zone: the commander is a real
+            // card with a name, type, and rules text.
+            for (final JsonNode c : p.path("command")) {
+                if (idsContain(commanderIds, c.path("id").asInt(-1))) {
+                    Assert.assertFalse(c.path("name").asText().isEmpty(), "commander card has a name");
+                    Assert.assertFalse(c.path("type").asText().isEmpty(), "commander card has a type line");
+                    Assert.assertFalse(c.path("text").asText().isEmpty(), "commander card has rules text");
+                    sawCommander = true;
+                }
             }
         }
-        Assert.assertTrue(sawCommander, "at least one commander card should be present in the view");
+        Assert.assertTrue(sawCommander, "the commander card should be present in the command zone");
 
         // Phase 2: prove the interaction loop reaches the engine. The dealt board sits at the
         // mulligan decision (turn 0, no phase). Repeatedly send selectButtonOk — the universal
@@ -149,6 +156,15 @@ public class WebGameBootstrapTest {
 
     private static String phaseKey(final JsonNode gameView) {
         return gameView.path("turn").asInt() + ":" + gameView.path("phase").asText();
+    }
+
+    private static boolean idsContain(final JsonNode idArray, final int id) {
+        for (final JsonNode n : idArray) {
+            if (n.asInt() == id) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean allPlayersHaveLibrary(final JsonNode gameView) {

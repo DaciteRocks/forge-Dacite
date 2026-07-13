@@ -32,6 +32,7 @@
     .card.attacking { border-color:#ff6b6b; box-shadow:0 0 0 1px #ff6b6b inset; }
     .card.blocking { border-color:#5bd6a0; box-shadow:0 0 0 1px #5bd6a0 inset; }
     .card.back { background:repeating-linear-gradient(45deg,#1b2430,#1b2430 6px,#222d3b 6px,#222d3b 12px); color:var(--muted); text-align:center; font-size:11px; }
+    .card.cmdr { border-color:#d9a441; box-shadow:0 0 0 1px #d9a441 inset; }
     .card .n { font-weight:600; }
     .card .pt { color:var(--accent); float:right; }
     .card .t { font-size:11px; color:var(--muted); }
@@ -60,6 +61,21 @@
     .dialog .opt[disabled] { opacity:.4; }
     .dialog div { margin:4px 0; color:var(--muted); }
     .dialog input { background:#222d3b; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 8px; margin:4px 0; font:inherit; }
+    .dialog select { width:100%; background:#222d3b; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:8px; margin:4px 0 10px; font:inherit; }
+    /* Lobby / setup screen */
+    #setup { position:fixed; inset:0; background:var(--bg); display:none; align-items:flex-start; justify-content:center; padding:20px; overflow:auto; z-index:20; }
+    #setup.show { display:flex; }
+    .setup-label { display:block; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:10px; }
+    .setup-row { display:flex; align-items:center; gap:10px; margin:8px 0; }
+    .setup-row button { background:#2a3444; color:var(--text); border:1px solid var(--line); border-radius:8px; width:40px; height:40px; font-size:20px; font-weight:700; }
+    .setup-count { font-size:20px; font-weight:700; min-width:24px; text-align:center; }
+    .setup-dialog .start { background:var(--accent); color:#04121f; font-weight:700; margin-top:14px; }
+    /* Card-detail overlay (long-press) — independent of the game-question modal */
+    .detail-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:center; justify-content:center; padding:20px; z-index:30; }
+    .detail-mc { color:var(--accent); font-weight:600; }
+    .detail-type { color:var(--muted); font-size:12px; margin:4px 0; }
+    .detail-pt { color:var(--accent); font-weight:700; }
+    .detail-text { white-space:pre-wrap; margin-top:10px; line-height:1.5; }
   </style>
 </head>
 <body>
@@ -75,6 +91,7 @@
   <div id="combatWrap"></div>
   <div id="players"></div>
   <div id="modal"></div>
+  <div id="setup"></div>
   <script src="app.js"></script>
 </body>
 </html>

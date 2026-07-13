@@ -30,7 +30,9 @@ public final class PlayerViewDto {
     public List<CardViewDto> graveyard;
     public List<CardViewDto> exile;
     public List<CardViewDto> command;
-    public List<CardViewDto> commanders;
+    /** Ids of this player's commander cards, so the client can mark the commander wherever it is
+     * (command zone, battlefield, …) instead of showing a separate, duplicate "commanders" zone. */
+    public List<Integer> commanderIds;
 
     public static PlayerViewDto from(final PlayerView p) {
         if (p == null) {
@@ -47,7 +49,7 @@ public final class PlayerViewDto {
         d.graveyard = CardViewDto.fromAll(p.getGraveyard());
         d.exile = CardViewDto.fromAll(p.getExile());
         d.command = CardViewDto.fromAll(p.getCommand());
-        d.commanders = CardViewDto.fromAll(p.getCommanders());
+        d.commanderIds = CardViewDto.idsOf(p.getCommanders());
         // getZoneSize null-guards the underlying collection (an empty zone's view can be null),
         // so this is safe even before/without the zone being populated.
         d.handSize = p.getZoneSize(ZoneType.Hand);

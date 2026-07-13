@@ -20,6 +20,7 @@ public final class CardViewDto {
     public int id;
     public String name;
     public String type;
+    public String text;
     public int power;
     public int toughness;
     public int damage;
@@ -44,6 +45,7 @@ public final class CardViewDto {
         final CardViewDto d = new CardViewDto();
         d.id = c.getId();
         d.name = c.getName();
+        d.text = c.getText();
         d.damage = c.getDamage();
         d.zone = c.getZone() != null ? c.getZone().name() : null;
         final PlayerView controller = c.getController();

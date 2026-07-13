@@ -17,10 +17,12 @@
   var combatWrap = document.getElementById("combatWrap");
   var playersEl = document.getElementById("players");
   var modalEl = document.getElementById("modal");
+  var setupEl = document.getElementById("setup");
 
   var mySeatIds = [];
   var cardNames = {};        // id -> name, rebuilt each render so combat can name blockers.
   var selectable = {};       // id -> true for cards the engine will accept a click on.
+  var commanders = {};       // id -> true for commander cards, marked wherever they are.
   var lastGame = null;       // last GameView, so a selectables update can re-render.
 
   // MagicColor byte values the engine's useMana(byte) expects.
@@ -67,7 +69,8 @@
   function handle(type, payload, id) {
     switch (type) {
       case "openView": mySeatIds = payload || []; break;
-      case "setGameView": lastGame = payload; renderGame(payload); break;
+      case "setup": renderSetup(payload); break;
+      case "setGameView": hideSetup(); lastGame = payload; renderGame(payload); break;
       case "prompt": promptEl.textContent = payload && payload.message ? payload.message : ""; break;
       case "buttons": renderButtons(payload); break;
       case "message": if (payload && payload.message) { promptEl.textContent = payload.message; } break;
@@ -104,6 +107,10 @@
     if (g.gameOver) { turnEl.textContent += g.winner ? " · WINNER: " + g.winner : " · game over"; }
 
     indexCardNames(g);
+    commanders = {};
+    (g.players || []).forEach(function (p) {
+      (p.commanderIds || []).forEach(function (id) { commanders[id] = true; });
+    });
     renderStack(g.stack);
     renderCombat(g.combat);
 
@@ -116,7 +123,7 @@
   function indexCardNames(g) {
     cardNames = {};
     (g.players || []).forEach(function (p) {
-      ["battlefield", "hand", "graveyard", "exile", "command", "commanders"].forEach(function (z) {
+      ["battlefield", "hand", "graveyard", "exile", "command"].forEach(function (z) {
         (p[z] || []).forEach(function (c) { if (c) { cardNames[c.id] = c.name; } });
       });
     });
@@ -175,7 +182,6 @@
     zones.appendChild(handZone(p));
     zones.appendChild(battlefieldZone(p.battlefield));
     zones.appendChild(zone("Command", p.command));
-    if (p.commanders && p.commanders.length) { zones.appendChild(zone("Commanders", p.commanders)); }
     zones.appendChild(zone("Graveyard", p.graveyard));
     zones.appendChild(zone("Exile", p.exile));
     zones.appendChild(zone("Library", null, p.librarySize));
@@ -259,10 +265,11 @@
     if (c.attacking) { cls += " attacking"; }
     if (c.blocking) { cls += " blocking"; }
     if (selectable[c.id]) { cls += " selectable"; }
+    if (commanders[c.id]) { cls += " cmdr"; }
     var card = el("div", cls);
-    card.onclick = function (e) { e.stopPropagation(); sendAction("selectCard", { cardId: c.id }); };
+    attachCardInteractions(card, c); // tap = play (selectCard), long-press = card detail
 
-    var n = el("div", "n", c.faceDown ? "(face down)" : (c.name || "?"));
+    var n = el("div", "n", (commanders[c.id] ? "👑 " : "") + (c.faceDown ? "(face down)" : (c.name || "?")));
     if (c.creature) {
       var ptText = c.power + "/" + c.toughness + (c.damage ? " (" + c.damage + " dmg)" : "");
       n.appendChild(el("span", "pt", ptText));
@@ -551,6 +558,111 @@
     modalEl.classList.remove("show");
     modalEl.innerHTML = "";
   }
+
+  // ── Card interactions: tap = play (selectCard); long-press = read the full card ───────────────
+  function attachCardInteractions(cardEl, c) {
+    var timer = null;
+    var longPressed = false;
+    function start() { longPressed = false; timer = setTimeout(function () { longPressed = true; showCardDetail(c); }, 450); }
+    function cancel() { if (timer) { clearTimeout(timer); timer = null; } }
+    cardEl.addEventListener("touchstart", start, { passive: true });
+    cardEl.addEventListener("touchmove", cancel, { passive: true });
+    cardEl.addEventListener("touchend", cancel);
+    cardEl.addEventListener("mousedown", start);
+    cardEl.addEventListener("mouseup", cancel);
+    cardEl.addEventListener("mouseleave", cancel);
+    cardEl.onclick = function (e) {
+      e.stopPropagation();
+      if (longPressed) { longPressed = false; return; } // a long-press already opened the detail
+      sendAction("selectCard", { cardId: c.id });
+    };
+  }
+
+  // Full card readout in its own overlay (independent of the game-question modal), tap to dismiss.
+  function showCardDetail(c) {
+    var overlay = el("div", "detail-overlay");
+    var d = el("div", "dialog");
+    d.appendChild(el("h3", "", (commanders[c.id] ? "👑 " : "") + (c.faceDown ? "(face down)" : (c.name || "?"))));
+    if (c.manaCost) { d.appendChild(el("div", "detail-mc", c.manaCost)); }
+    if (c.type) { d.appendChild(el("div", "detail-type", c.type)); }
+    if (c.creature) { d.appendChild(el("div", "detail-pt", c.power + "/" + c.toughness + (c.damage ? " (" + c.damage + " dmg)" : ""))); }
+    else if (c.loyalty) { d.appendChild(el("div", "detail-pt", "Loyalty: " + c.loyalty)); }
+    if (c.text) { d.appendChild(el("div", "detail-text", c.text)); }
+    d.appendChild(el("button", "opt", "Close"));
+    overlay.appendChild(d);
+    overlay.onclick = function () { if (overlay.parentNode) { overlay.parentNode.removeChild(overlay); } };
+    document.body.appendChild(overlay);
+  }
+
+  // ── Lobby / setup screen ──────────────────────────────────────────────────────────────────────
+  function renderSetup(payload) {
+    var decks = (payload && payload.decks) || [{ id: "random", label: "🎲 Random" }];
+    var maxAi = (payload && payload.maxAi) || 5;
+    var aiCount = Math.max(1, Math.min(maxAi, (payload && payload.defaultAi) || 1));
+    var aiSelects = [];
+
+    var box = el("div", "dialog setup-dialog");
+    box.appendChild(el("h3", "", "New Commander Game"));
+
+    var aiWrap = el("div", "");
+    function rebuild() {
+      aiWrap.innerHTML = "";
+      aiSelects = [];
+      for (var i = 0; i < aiCount; i++) {
+        aiWrap.appendChild(el("span", "setup-label", "Opponent " + (i + 1) + " deck:"));
+        var s = deckSelect(decks);
+        aiWrap.appendChild(s);
+        aiSelects.push(s);
+      }
+    }
+    var count = el("span", "setup-count", String(aiCount));
+    function setCount(n) { aiCount = Math.max(1, Math.min(maxAi, n)); count.textContent = String(aiCount); rebuild(); }
+
+    var aiRow = el("div", "setup-row");
+    aiRow.appendChild(el("span", "setup-label", "Opponents (AI):"));
+    aiRow.appendChild(barBtn("−", function () { setCount(aiCount - 1); }));
+    aiRow.appendChild(count);
+    aiRow.appendChild(barBtn("+", function () { setCount(aiCount + 1); }));
+    box.appendChild(aiRow);
+
+    box.appendChild(el("span", "setup-label", "Your deck:"));
+    var humanSel = deckSelect(decks);
+    box.appendChild(humanSel);
+
+    box.appendChild(aiWrap);
+    rebuild();
+
+    var start = el("button", "opt start", "Start Game");
+    start.onclick = function () {
+      sendAction("startGame", {
+        aiCount: aiCount,
+        human: humanSel.value,
+        ai: aiSelects.map(function (s) { return s.value; })
+      });
+      setStatus("starting game…");
+      hideSetup();
+    };
+    box.appendChild(start);
+
+    setupEl.innerHTML = "";
+    setupEl.appendChild(box);
+    setupEl.classList.add("show");
+  }
+
+  function hideSetup() { setupEl.classList.remove("show"); setupEl.innerHTML = ""; }
+
+  function deckSelect(decks) {
+    var s = document.createElement("select");
+    decks.forEach(function (d) {
+      var o = document.createElement("option");
+      o.value = d.id;
+      o.textContent = d.label;
+      s.appendChild(o);
+    });
+    return s;
+  }
+
+  function barBtn(label, onclick) { var b = el("button", "", label); b.onclick = onclick; return b; }
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
