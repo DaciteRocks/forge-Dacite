@@ -134,6 +134,17 @@ public class WebGameBootstrapTest {
         final String advancedPhase = advancedView.path("phase").asText();
         Assert.assertNotEquals(advancedPhase, "null", "the advanced view should report a real phase");
         Assert.assertFalse(advancedPhase.isEmpty(), "the advanced view should report a real phase");
+
+        // Reconnect resync re-sends the seat + the cached board snapshot (never reads the live
+        // GameView off the game thread). Proves the snapshot was cached during play.
+        final long viewsBefore = countType(recorded, "setGameView");
+        gui.resync();
+        Assert.assertTrue(countType(recorded, "setGameView") > viewsBefore, "resync should re-send the cached game view");
+        Assert.assertTrue(countType(recorded, "openView") >= 1, "resync should re-send the seat (openView)");
+    }
+
+    private static long countType(final List<String> recorded, final String type) {
+        return recorded.stream().filter(m -> m.contains("\"type\":\"" + type + "\"")).count();
     }
 
     private static String phaseKey(final JsonNode gameView) {

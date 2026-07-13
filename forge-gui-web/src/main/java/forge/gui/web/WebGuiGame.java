@@ -62,6 +62,11 @@ public final class WebGuiGame extends NetworkGuiGame {
     /** The seat ids sent in openView, retained so a reconnect can re-send them for a full resync. */
     private volatile List<Integer> myPlayerIds = new ArrayList<>();
 
+    /** The most recent game-state snapshot, built on the game thread. A reconnect re-sends THIS
+     * (an immutable DTO) rather than reading the live GameView off-thread, which would race the
+     * engine mutating its trackable collections. */
+    private volatile GameViewDto lastGameView;
+
     public WebGuiGame(final WebSession session) {
         this.session = session;
         if (session != null) {
@@ -188,11 +193,14 @@ public final class WebGuiGame extends NetworkGuiGame {
         return null;
     }
 
-    /** Push the current full game state, if we have one. */
+    /** Push the current full game state, if we have one. Runs on the game thread (engine callback),
+     * so this is the only place the live GameView is read; the snapshot is cached for reconnects. */
     private void pushGameView() {
         final GameView gv = getGameView();
         if (gv != null) {
-            send("setGameView", GameViewDto.from(gv));
+            final GameViewDto dto = GameViewDto.from(gv);
+            lastGameView = dto;
+            send("setGameView", dto);
         }
     }
 
@@ -220,11 +228,16 @@ public final class WebGuiGame extends NetworkGuiGame {
         pushGameView();
     }
 
-    /** Re-send the seat and the full game state — used when a browser reconnects after a dropped
-     * socket, so it repaints from scratch. Any open question is re-sent by {@link WebSession#rebind}. */
+    /** Re-send the seat and the last game-state snapshot — used when a browser reconnects after a
+     * dropped socket, so it repaints from scratch. Safe to call from any thread: it re-sends the
+     * cached immutable DTO instead of reading the live GameView. Any open question is re-sent by
+     * {@link WebSession#rebind}. */
     public void resync() {
         send("openView", myPlayerIds);
-        pushGameView();
+        final GameViewDto dto = lastGameView;
+        if (dto != null) {
+            send("setGameView", dto);
+        }
     }
 
     @Override

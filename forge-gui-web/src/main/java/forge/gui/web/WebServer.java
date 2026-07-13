@@ -3,6 +3,10 @@ package forge.gui.web;
 import io.javalin.Javalin;
 import io.javalin.http.staticfiles.Location;
 
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -30,6 +34,20 @@ public final class WebServer {
 
     /** Connection id currently bound to {@link #session}, so a stale old socket's close is ignored. */
     private volatile String activeConnectionId;
+
+    /** Serializes the connect/reconnect/close transitions so a stale close can't detach a session a
+     * concurrent reconnect just rebound (a check-then-act on activeConnectionId alone races). */
+    private final Object lifecycleLock = new Object();
+
+    /** If a disconnect isn't followed by a reconnect within the grace window, the game is treated as
+     * abandoned and its pending questions are failed so the game thread can't park indefinitely. */
+    private static final long RECONNECT_GRACE_SECONDS = 120;
+    private final ScheduledExecutorService graceTimer = Executors.newSingleThreadScheduledExecutor(r -> {
+        final Thread t = new Thread(r, "web-reconnect-grace");
+        t.setDaemon(true);
+        return t;
+    });
+    private ScheduledFuture<?> graceTask;
 
     public WebServer(final int port) {
         this.port = port;
@@ -66,32 +84,49 @@ public final class WebServer {
                         System.out.println("[web] send failed: " + e.getMessage());
                     }
                 };
-                activeConnectionId = ctx.sessionId();
-                if (session == null) {
-                    session = new WebSession(transport);
+                final boolean firstConnect;
+                final WebSession s;
+                synchronized (lifecycleLock) {
+                    activeConnectionId = ctx.sessionId();
+                    cancelGraceTask(); // a reconnect within the grace window keeps the game alive
+                    if (session == null) {
+                        session = new WebSession(transport);
+                        firstConnect = true;
+                    } else {
+                        session.rebind(transport); // atomic with the close-side detach decision
+                        firstConnect = false;
+                    }
+                    s = session;
+                }
+                // Start the game / push the resync outside the lock (they may be slow).
+                if (firstConnect) {
                     System.out.println("[web] browser connected (new game): " + ctx.sessionId());
-                    onConnect.accept(session);
+                    onConnect.accept(s);
                 } else {
-                    // Reconnect: rebind the live session to this socket and resync the board.
-                    session.rebind(transport);
                     System.out.println("[web] browser reconnected: " + ctx.sessionId());
-                    onReconnect.accept(session);
+                    onReconnect.accept(s);
                 }
             });
             ws.onMessage(ctx -> {
+                // Only accept input from the active connection, so a stale/duplicate socket can't
+                // inject spurious actions (pass/concede) into the live game. Stale replies are
+                // already harmless (their pending id is gone), but actions must be gated.
+                if (!ctx.sessionId().equals(activeConnectionId)) {
+                    return;
+                }
                 final WebSession s = session;
                 if (s != null) {
                     s.onClientMessage(ctx.message());
                 }
             });
             ws.onClose(ctx -> {
-                // Only detach if this is the current socket — a stale socket closing after a
-                // reconnect must not tear down the live session.
-                if (ctx.sessionId().equals(activeConnectionId)) {
-                    System.out.println("[web] browser disconnected (awaiting reconnect): " + ctx.sessionId());
-                    final WebSession s = session;
-                    if (s != null) {
-                        s.detach();
+                synchronized (lifecycleLock) {
+                    // Re-check under the lock: a stale socket closing after a reconnect must not
+                    // detach the session the reconnect just rebound.
+                    if (ctx.sessionId().equals(activeConnectionId) && session != null) {
+                        System.out.println("[web] browser disconnected (awaiting reconnect): " + ctx.sessionId());
+                        session.detach();
+                        scheduleGraceTask(ctx.sessionId());
                     }
                 }
             });
@@ -101,7 +136,29 @@ public final class WebServer {
         System.out.println("[web] Forge web client on http://<this-machine-lan-ip>:" + port + "  (open in your phone browser)");
     }
 
+    /** Cancel any pending abandonment timer (a browser (re)connected in time). Caller holds the lock. */
+    private void cancelGraceTask() {
+        if (graceTask != null) {
+            graceTask.cancel(false);
+            graceTask = null;
+        }
+    }
+
+    /** After a disconnect, if no reconnect replaces {@code closedId} within the grace window, treat
+     * the game as abandoned: terminally fail its pending questions so the game thread can proceed. */
+    private void scheduleGraceTask(final String closedId) {
+        graceTask = graceTimer.schedule(() -> {
+            synchronized (lifecycleLock) {
+                if (closedId.equals(activeConnectionId) && session != null) {
+                    System.out.println("[web] no reconnect within grace window; abandoning game.");
+                    session.onClose();
+                }
+            }
+        }, RECONNECT_GRACE_SECONDS, TimeUnit.SECONDS);
+    }
+
     public void stop() {
+        graceTimer.shutdownNow();
         if (app != null) {
             app.stop();
         }
