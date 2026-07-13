@@ -17,6 +17,7 @@ public final class GameViewDto {
     public Integer playerTurnId;
     public List<PlayerViewDto> players;
     public List<StackItemDto> stack;
+    public CombatDto combat;
 
     public static GameViewDto from(final GameView g) {
         if (g == null) {
@@ -39,6 +40,7 @@ public final class GameViewDto {
             }
         }
         d.stack = StackItemDto.fromAll(g.getStack());
+        d.combat = CombatDto.from(g.getCombat());
         return d;
     }
 }

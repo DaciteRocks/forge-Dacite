@@ -1,9 +1,12 @@
 package forge.gui.web.dto;
 
+import forge.card.MagicColor;
 import forge.game.player.PlayerView;
 import forge.game.zone.ZoneType;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * JSON projection of a {@link PlayerView}. Zones are serialized as the View exposes them, which
@@ -18,6 +21,10 @@ public final class PlayerViewDto {
     public boolean hasPriority;
     public int handSize;
     public int librarySize;
+    /** Floating mana by color symbol (W/U/B/R/G/C); only nonzero pools are included, null if empty. */
+    public Map<String, Integer> manaPool;
+    /** Player counters (poison, energy, experience, …) by name; null if the player has none. */
+    public Map<String, Integer> counters;
     public List<CardViewDto> hand;
     public List<CardViewDto> battlefield;
     public List<CardViewDto> graveyard;
@@ -45,6 +52,28 @@ public final class PlayerViewDto {
         // so this is safe even before/without the zone being populated.
         d.handSize = p.getZoneSize(ZoneType.Hand);
         d.librarySize = p.getZoneSize(ZoneType.Library);
+        d.manaPool = manaPoolOf(p);
+        d.counters = CardViewDto.counterMap(p.getCounters());
         return d;
+    }
+
+    /** The five colors plus colorless, in WUBRG(C) order, keyed by their one-letter symbol. */
+    private static final byte[] MANA_COLORS = {
+        MagicColor.WHITE, MagicColor.BLUE, MagicColor.BLACK, MagicColor.RED, MagicColor.GREEN, MagicColor.COLORLESS,
+    };
+    private static final String[] MANA_SYMBOLS = {"W", "U", "B", "R", "G", "C"};
+
+    private static Map<String, Integer> manaPoolOf(final PlayerView p) {
+        Map<String, Integer> pool = null;
+        for (int i = 0; i < MANA_COLORS.length; i++) {
+            final int amount = p.getMana(MANA_COLORS[i]);
+            if (amount > 0) {
+                if (pool == null) {
+                    pool = new LinkedHashMap<>();
+                }
+                pool.put(MANA_SYMBOLS[i], amount);
+            }
+        }
+        return pool;
     }
 }

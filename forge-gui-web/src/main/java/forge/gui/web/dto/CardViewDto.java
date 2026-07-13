@@ -33,6 +33,9 @@ public final class CardViewDto {
     public boolean faceDown;
     public boolean creature;
     public boolean land;
+    public boolean sick;
+    public Integer attachedToId;
+    public List<Integer> attachedCardIds;
     public Map<String, Integer> counters;
 
     public static CardViewDto from(final CardView c) {
@@ -50,6 +53,10 @@ public final class CardViewDto {
         d.attacking = c.isAttacking();
         d.blocking = c.isBlocking();
         d.faceDown = c.isFaceDown();
+        d.sick = c.hasSickness();
+        final CardView attachedTo = c.getAttachedTo();
+        d.attachedToId = attachedTo != null ? attachedTo.getId() : null;
+        d.attachedCardIds = idsOf(c.getAttachedCards());
         d.counters = counterMap(c.getCounters());
 
         // Characteristics that depend on the current face/state live on CardStateView.
@@ -64,6 +71,20 @@ public final class CardViewDto {
             d.land = state.isLand();
         }
         return d;
+    }
+
+    /** Ids of a collection of cards (e.g. equipment/auras attached to a permanent), or null if none. */
+    static List<Integer> idsOf(final Iterable<CardView> cards) {
+        if (cards == null) {
+            return null;
+        }
+        final List<Integer> out = new ArrayList<>();
+        for (final CardView c : cards) {
+            if (c != null) {
+                out.add(c.getId());
+            }
+        }
+        return out.isEmpty() ? null : out;
     }
 
     static Map<String, Integer> counterMap(final Map<CounterType, Integer> src) {

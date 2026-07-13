@@ -23,11 +23,27 @@
     .zone h3 { margin:0 0 6px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
     .card { border:1px solid var(--line); border-radius:8px; padding:6px 8px; margin-bottom:6px; background:#171d26; }
     .card.tapped { transform:rotate(3deg); opacity:.8; }
+    .card.sick { border-style:dashed; }
+    .card.attacking { border-color:#ff6b6b; box-shadow:0 0 0 1px #ff6b6b inset; }
+    .card.blocking { border-color:#5bd6a0; box-shadow:0 0 0 1px #5bd6a0 inset; }
+    .card.back { background:repeating-linear-gradient(45deg,#1b2430,#1b2430 6px,#222d3b 6px,#222d3b 12px); color:var(--muted); text-align:center; font-size:11px; }
     .card .n { font-weight:600; }
     .card .pt { color:var(--accent); float:right; }
     .card .t { font-size:11px; color:var(--muted); }
+    .card .dmg { color:#ff6b6b; font-size:11px; }
+    .card .ctrs { margin-top:3px; display:flex; flex-wrap:wrap; gap:3px; }
+    .card .attached { margin-top:5px; padding-left:8px; border-left:2px solid var(--line); }
+    .ctr { font-size:10px; background:#2a3444; border-radius:6px; padding:1px 5px; color:var(--text); }
+    .pip { display:inline-block; min-width:16px; text-align:center; border-radius:6px; padding:1px 5px; font-size:11px; font-weight:700; }
+    .pip.W{background:#f4f0d8;color:#2a2410;} .pip.U{background:#b6d7f0;color:#0a2536;}
+    .pip.B{background:#3a3540;color:#e6e0ec;} .pip.R{background:#f0b8ac;color:#3a0f08;}
+    .pip.G{background:#b7d9b4;color:#0e2a10;} .pip.C{background:#cdd3da;color:#1a2028;}
+    .mana, .pctrs { display:inline-flex; gap:4px; align-items:center; }
     .stack { margin:10px 14px; }
     .stack .item { border:1px solid var(--accent); border-radius:8px; padding:6px 10px; margin-bottom:6px; background:#101a28; }
+    .combat { margin:10px 14px; }
+    .combat h3 { margin:0 0 6px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#ff6b6b; }
+    .combat .band { border:1px solid #45322f; border-radius:8px; padding:6px 10px; margin-bottom:6px; background:#22181a; }
     .count { color:var(--muted); font-size:12px; }
   </style>
 </head>
@@ -40,6 +56,7 @@
   <div id="prompt"></div>
   <div id="buttons"></div>
   <div id="stackWrap"></div>
+  <div id="combatWrap"></div>
   <div id="players"></div>
   <script src="app.js"></script>
 </body>
