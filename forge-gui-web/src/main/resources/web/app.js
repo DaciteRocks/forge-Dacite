@@ -265,30 +265,38 @@
     var n = cards ? cards.length : 0;
     z.appendChild(el("h3", "", name + " (" + n + ")"));
     if (n > 0) {
-      var view = el("button", "zone-view", "View");
+      // Highlight View when the engine has marked a card here selectable (flashback / targeting),
+      // so the player knows to open the zone even though its cards aren't on the board.
+      var hasSelectable = cards.some(function (c) { return selectable[c.id]; });
+      var view = el("button", "zone-view" + (hasSelectable ? " selectable" : ""), hasSelectable ? "View ●" : "View");
       view.onclick = function () { showZoneCards(name, cards); };
       z.appendChild(view);
     }
     return z;
   }
 
-  // List every card in a zone in an overlay; tap a card to read its full detail.
+  // List every card in a zone in an overlay; tap a card for its full detail (which offers a Select
+  // action when the card is playable/targetable). The View button flagged which zones have those.
   function showZoneCards(name, cards) {
     var overlay = el("div", "detail-overlay");
+    function close() { if (overlay.parentNode) { overlay.parentNode.removeChild(overlay); } }
     var d = el("div", "dialog");
     d.appendChild(el("h3", "", name + " (" + cards.length + ")"));
     var list = el("div", "zone-cards");
     cards.forEach(function (c) {
-      var row = el("button", "opt", (commanders[c.id] ? "👑 " : "") + (c.name || "?") + (c.type ? " — " + c.type : ""));
+      var row = el("button", "opt" + (selectable[c.id] ? " sel" : ""),
+        (commanders[c.id] ? "👑 " : "") + (c.name || "?") + (c.type ? " — " + c.type : "") + (selectable[c.id] ? "  ●" : ""));
       row.onclick = function () { showCardDetail(c); };
       list.appendChild(row);
     });
     d.appendChild(list);
-    d.appendChild(el("button", "opt", "Close"));
+    var closeBtn = el("button", "opt", "Close");
+    closeBtn.onclick = close;
+    d.appendChild(closeBtn);
     overlay.appendChild(d);
     var armed = false;
     setTimeout(function () { armed = true; }, 200);
-    overlay.onclick = function (e) { if (armed && e.target === overlay) { overlay.parentNode.removeChild(overlay); } };
+    overlay.onclick = function (e) { if (armed && e.target === overlay) { close(); } };
     document.body.appendChild(overlay);
   }
 
@@ -626,6 +634,14 @@
     if (c.creature) { d.appendChild(el("div", "detail-pt", c.power + "/" + c.toughness + (c.damage ? " (" + c.damage + " dmg)" : ""))); }
     else if (c.loyalty) { d.appendChild(el("div", "detail-pt", "Loyalty: " + c.loyalty)); }
     if (c.text) { d.appendChild(el("div", "detail-text", c.text)); }
+    // If the engine will accept a click on this card (e.g. a flashback/escape card in the graveyard,
+    // or a targeting prompt), offer a Select action here — this is how such cards are played/chosen
+    // from the compact graveyard/exile viewer, which otherwise only shows detail.
+    if (selectable[c.id]) {
+      var sel = el("button", "opt start", "Select");
+      sel.onclick = function () { closeAllOverlays(); sendAction("selectCard", { cardId: c.id }); };
+      d.appendChild(sel);
+    }
     d.appendChild(el("button", "opt", "Close"));
     overlay.appendChild(d);
     // Arm dismissal only after the opening gesture has fully settled, so a late emulated click from
@@ -634,6 +650,11 @@
     setTimeout(function () { armed = true; }, 350);
     overlay.onclick = function () { if (armed && overlay.parentNode) { overlay.parentNode.removeChild(overlay); } };
     document.body.appendChild(overlay);
+  }
+
+  function closeAllOverlays() {
+    var o = document.getElementsByClassName("detail-overlay");
+    while (o.length) { o[0].parentNode.removeChild(o[0]); }
   }
 
   // ── Lobby / setup screen ──────────────────────────────────────────────────────────────────────
