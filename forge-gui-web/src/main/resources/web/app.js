@@ -623,7 +623,7 @@
       aiSelects = [];
       for (var i = 0; i < aiCount; i++) {
         aiWrap.appendChild(el("span", "setup-label", "Opponent " + (i + 1) + " deck:"));
-        var s = deckSelect(decks);
+        var s = deckPicker(decks);
         aiWrap.appendChild(s);
         aiSelects.push(s);
       }
@@ -639,7 +639,7 @@
     box.appendChild(aiRow);
 
     box.appendChild(el("span", "setup-label", "Your deck:"));
-    var humanSel = deckSelect(decks);
+    var humanSel = deckPicker(decks);
     box.appendChild(humanSel);
 
     box.appendChild(aiWrap);
@@ -649,8 +649,8 @@
     start.onclick = function () {
       sendAction("startGame", {
         aiCount: aiCount,
-        human: humanSel.value,
-        ai: aiSelects.map(function (s) { return s.value; })
+        human: humanSel.selectedId,
+        ai: aiSelects.map(function (s) { return s.selectedId; })
       });
       // Keep the setup visible (just disabled) until the game actually starts — setGameView calls
       // hideSetup(). If the start fails, the server re-sends setup with an error, re-enabling this.
@@ -683,15 +683,52 @@
     document.body.appendChild(overlay);
   }
 
-  function deckSelect(decks) {
-    var s = document.createElement("select");
-    decks.forEach(function (d) {
-      var o = document.createElement("option");
-      o.value = d.id;
-      o.textContent = d.label;
-      s.appendChild(o);
-    });
-    return s;
+  // A searchable deck picker: a button showing the current choice; tapping it opens a filter box +
+  // a scrollable list of matching decks. Exposes `.selectedId` (read at Start time). Defaults to the
+  // first deck (Random). Handles long saved+precon deck lists far better than a native <select>.
+  function deckPicker(decks) {
+    var container = el("div", "deckpick");
+    var selected = decks[0] || { id: "random", label: "🎲 Random" };
+    container.selectedId = selected.id;
+
+    var current = el("button", "deckpick-current", selected.label);
+    var panel = el("div", "deckpick-panel");
+    var search = document.createElement("input");
+    search.type = "text";
+    search.placeholder = "Search decks…";
+    var list = el("div", "deckpick-list");
+
+    function renderList() {
+      var q = search.value.trim().toLowerCase();
+      list.innerHTML = "";
+      decks.forEach(function (d) {
+        if (q && d.label.toLowerCase().indexOf(q) < 0) { return; }
+        var opt = el("button", "deckpick-opt" + (d.id === selected.id ? " sel" : ""), d.label);
+        opt.onclick = function () {
+          selected = d;
+          container.selectedId = d.id;
+          current.textContent = d.label;
+          collapse();
+        };
+        list.appendChild(opt);
+      });
+    }
+    function expand() {
+      panel.style.display = "block";
+      search.value = "";
+      renderList();
+      setTimeout(function () { search.focus(); }, 0);
+    }
+    function collapse() { panel.style.display = "none"; }
+
+    current.onclick = function () { panel.style.display === "block" ? collapse() : expand(); };
+    search.oninput = renderList;
+    panel.style.display = "none";
+    panel.appendChild(search);
+    panel.appendChild(list);
+    container.appendChild(current);
+    container.appendChild(panel);
+    return container;
   }
 
   function barBtn(label, onclick) { var b = el("button", "", label); b.onclick = onclick; return b; }
