@@ -27,16 +27,28 @@
   var MANA_BYTE = { W: 1, U: 2, B: 4, R: 8, G: 16, C: 0 };
 
   var proto = location.protocol === "https:" ? "wss:" : "ws:";
-  var ws = new WebSocket(proto + "//" + location.host + "/game");
+  var ws;
+  var reconnectDelay = 500;
 
-  ws.onopen = function () { setStatus("connected"); };
-  ws.onclose = function () { setStatus("disconnected"); };
-  ws.onerror = function () { setStatus("error"); };
-  ws.onmessage = function (ev) {
-    var msg;
-    try { msg = JSON.parse(ev.data); } catch (e) { return; }
-    handle(msg.type, msg.payload, msg.id);
-  };
+  // Phones drop the socket whenever Safari backgrounds the tab or the screen locks. Auto-reconnect
+  // with backoff; the server rebinds the SAME game session and pushes a full resync on reconnect,
+  // so the game continues (a pending question is re-sent) rather than restarting.
+  function connect() {
+    ws = new WebSocket(proto + "//" + location.host + "/game");
+    ws.onopen = function () { setStatus("connected"); reconnectDelay = 500; };
+    ws.onclose = function () { setStatus("disconnected — reconnecting…"); scheduleReconnect(); };
+    ws.onerror = function () { setStatus("connection error"); };
+    ws.onmessage = function (ev) {
+      var msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      handle(msg.type, msg.payload, msg.id);
+    };
+  }
+
+  function scheduleReconnect() {
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 5000);
+  }
 
   function setStatus(s) { statusEl.textContent = s; }
 
@@ -49,6 +61,7 @@
   }
 
   renderActionBar();
+  connect();
 
   // ── Inbound ────────────────────────────────────────────────────────────────
   function handle(type, payload, id) {
@@ -297,6 +310,7 @@
     bar("Pass ▶▶ (until EOT)", function () { sendAction("passPriorityUntilEndOfTurn"); });
     bar("Undo", function () { sendAction("undoLastAction"); });
     bar("Alpha Strike", function () { sendAction("alphaStrike"); });
+    bar("Resync", function () { sendAction("requestResync"); });
     var concede = bar("Concede", function () {
       if (window.confirm("Concede this game?")) { sendAction("concede"); }
     });

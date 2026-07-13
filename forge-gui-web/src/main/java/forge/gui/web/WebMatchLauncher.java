@@ -4,7 +4,7 @@ import forge.gui.GuiBase;
 import forge.localinstance.properties.ForgePreferences.FPref;
 import forge.model.FModel;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Phase 0 entry point. Installs the headless {@link WebGuiBase}, initializes Forge (loads card
@@ -35,16 +35,22 @@ public final class WebMatchLauncher {
         System.out.println("[web] Forge initialized.");
 
         final WebServer server = new WebServer(port);
-        // Phase 0 hosts a single game. Guard so a reconnect or a second browser doesn't boot a
-        // second match into the same JVM (proper reconnect/hand-off is Phase 4).
-        final AtomicBoolean gameStarted = new AtomicBoolean(false);
+        // Single game per JVM. The first browser starts the match; a reconnecting browser rebinds
+        // the same session (handled in WebServer) and we push a full resync so it repaints.
+        final AtomicReference<WebGuiGame> activeGui = new AtomicReference<>();
         server.setOnConnect(session -> {
             guiBase.setActiveSession(session);
-            if (gameStarted.compareAndSet(false, true)) {
-                System.out.println("[web] session ready; starting Commander vs AI.");
-                WebGameHost.startCommanderVsAi(new WebGuiGame(session));
-            } else {
-                System.out.println("[web] game already running; ignoring extra connection (reconnect is Phase 4).");
+            System.out.println("[web] session ready; starting Commander vs AI.");
+            final WebGuiGame gui = new WebGuiGame(session);
+            activeGui.set(gui);
+            WebGameHost.startCommanderVsAi(gui);
+        });
+        server.setOnReconnect(session -> {
+            guiBase.setActiveSession(session);
+            final WebGuiGame gui = activeGui.get();
+            if (gui != null) {
+                System.out.println("[web] resyncing reconnected browser.");
+                gui.resync();
             }
         });
         server.start();

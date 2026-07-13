@@ -59,6 +59,9 @@ public final class WebGuiGame extends NetworkGuiGame {
      * engine's mutable {@code currentPlayer} for routing actions to the right controller. */
     private volatile PlayerView localPlayer;
 
+    /** The seat ids sent in openView, retained so a reconnect can re-send them for a full resync. */
+    private volatile List<Integer> myPlayerIds = new ArrayList<>();
+
     public WebGuiGame(final WebSession session) {
         this.session = session;
         if (session != null) {
@@ -90,6 +93,10 @@ public final class WebGuiGame extends NetworkGuiGame {
     }
 
     private void dispatchAction(final String type, final JsonNode payload) {
+        if ("requestResync".equals(type)) {
+            resync(); // pure state refresh; needs no controller
+            return;
+        }
         // Route to the controller for the player this browser owns (captured in openView), rather
         // than the engine's mutable currentPlayer, so a click can't be misrouted or dropped during
         // a transient current-player change. Falls back to currentPlayer if openView hasn't run yet.
@@ -208,7 +215,15 @@ public final class WebGuiGame extends NetworkGuiGame {
                 localPlayer = myPlayers.iterator().next(); // single web seat: the human
             }
         }
+        myPlayerIds = myIds;
         send("openView", myIds);
+        pushGameView();
+    }
+
+    /** Re-send the seat and the full game state — used when a browser reconnects after a dropped
+     * socket, so it repaints from scratch. Any open question is re-sent by {@link WebSession#rebind}. */
+    public void resync() {
+        send("openView", myPlayerIds);
         pushGameView();
     }
 

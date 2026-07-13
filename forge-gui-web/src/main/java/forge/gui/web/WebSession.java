@@ -24,11 +24,15 @@ import java.util.function.Consumer;
 public final class WebSession {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /** How the session pushes a raw JSON string to the browser (wired to the Javalin WsContext). */
-    private final Consumer<String> transport;
+    /** How the session pushes a raw JSON string to the browser (wired to the Javalin WsContext).
+     * Volatile + swappable so a reconnecting browser can {@link #rebind} without disturbing the
+     * game thread or the pending questions. */
+    private volatile Consumer<String> transport;
 
     private final AtomicLong nextRequestId = new AtomicLong(1);
     private final ConcurrentHashMap<Long, CompletableFuture<JsonNode>> pending = new ConcurrentHashMap<>();
+    /** The still-unanswered question messages, kept so we can re-send them to a reconnected browser. */
+    private final ConcurrentHashMap<Long, Message> pendingMessages = new ConcurrentHashMap<>();
 
     /** Routes a spontaneous player action {@code (type, payload)} to the game (set by WebGuiGame). */
     private volatile BiConsumer<String, JsonNode> actionHandler;
@@ -72,6 +76,7 @@ public final class WebSession {
         msg.type = type;
         msg.id = id;
         msg.payload = payload;
+        pendingMessages.put(id, msg); // retained so a reconnecting browser can be re-shown the question
         writeJson(msg);
 
         try {
@@ -80,7 +85,26 @@ public final class WebSession {
             return null;
         } finally {
             pending.remove(id);
+            pendingMessages.remove(id);
         }
+    }
+
+    /**
+     * Point this session at a new browser connection (a reconnect) and re-send every still-open
+     * question, so the game thread — which may be parked in {@link #sendAndWait} — keeps its answer
+     * path alive without ever being unblocked with a default.
+     */
+    public void rebind(final Consumer<String> newTransport) {
+        this.transport = newTransport;
+        for (final Message msg : pendingMessages.values()) {
+            writeJson(msg);
+        }
+    }
+
+    /** Drop outbound sends while no browser is attached (a transient disconnect). Pending questions
+     * are intentionally NOT failed — the game waits for the browser to reconnect (or time out). */
+    public void detach() {
+        this.transport = t -> { };
     }
 
     /** Called by {@link WebServer} for every message the browser sends. */
@@ -110,10 +134,13 @@ public final class WebSession {
         }
     }
 
-    /** Fail all outstanding questions so the game thread doesn't hang forever on disconnect. */
+    /** Terminal shutdown: fail all outstanding questions so the game thread can't hang forever.
+     * Used when the game is ending — a transient disconnect uses {@link #detach} instead, which
+     * keeps the questions alive for a reconnect. */
     public void onClose() {
         pending.values().forEach(f -> f.complete(null));
         pending.clear();
+        pendingMessages.clear();
     }
 
     private void writeJson(final Message msg) {
