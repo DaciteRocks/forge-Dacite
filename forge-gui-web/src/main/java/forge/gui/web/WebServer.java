@@ -116,10 +116,10 @@ public final class WebServer {
                 }
             });
             ws.onMessage(ctx -> {
-                // Control follows the device being used: if a message arrives from a non-active
-                // connection, make it active and redirect output to it, then resync so it's current.
-                // This lets a second device (the phone after the desktop) take over just by tapping.
-                boolean tookOver = false;
+                // Control follows the device being used: a message from a non-active connection makes
+                // it active and redirects output to it (transport swap only — no re-send, no resync).
+                // The device catches up via the state push its own action produces; this is what lets
+                // a second device (the phone after the desktop) take over just by tapping.
                 final WebSession s;
                 synchronized (lifecycleLock) {
                     s = session;
@@ -128,14 +128,10 @@ public final class WebServer {
                         if (t != null) {
                             activeConnectionId = ctx.sessionId();
                             cancelGraceTask();
-                            s.rebind(t);
-                            tookOver = true;
+                            s.setTransport(t);
+                            System.out.println("[web] control taken over by: " + ctx.sessionId());
                         }
                     }
-                }
-                if (tookOver) {
-                    System.out.println("[web] control taken over by: " + ctx.sessionId());
-                    onReconnect.accept(s); // bring the now-active device up to date
                 }
                 if (s != null) {
                     s.onClientMessage(ctx.message());

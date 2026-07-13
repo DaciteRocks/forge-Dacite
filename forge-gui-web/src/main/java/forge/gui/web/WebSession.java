@@ -101,6 +101,16 @@ public final class WebSession {
         }
     }
 
+    /**
+     * Redirect output to a new connection WITHOUT re-sending anything. Used when live control moves
+     * to another already-connected device (it interacted): the device catches up via the state push
+     * its own action produces. Unlike {@link #rebind}, this does not re-send open questions (which
+     * would re-open a modal on the device that just answered) and does no network I/O.
+     */
+    public void setTransport(final Consumer<String> newTransport) {
+        this.transport = newTransport;
+    }
+
     /** Drop outbound sends while no browser is attached (a transient disconnect). Pending questions
      * are intentionally NOT failed — the game waits for the browser to reconnect (or time out). */
     public void detach() {
