@@ -173,16 +173,24 @@
   }
 
   // Battlefield nests attached equipment/auras under their host and hides them at the top level.
+  // Skip and nest decisions both derive from attachedToId (the same field that determines board
+  // membership), so an attachment is never dropped by a mismatch between two different sources.
   function battlefieldZone(cards) {
     var z = el("div", "zone");
-    z.appendChild(el("h3", "", "Battlefield (" + (cards ? cards.length : 0) + ")"));
-    if (!cards) { return z; }
+    if (!cards) { z.appendChild(el("h3", "", "Battlefield (0)")); return z; }
     var byId = {};
     cards.forEach(function (c) { byId[c.id] = c; });
+    var childrenOf = {}; // hostId -> [attached card, ...]
+    var topLevel = [];
     cards.forEach(function (c) {
-      if (c.attachedToId != null && byId[c.attachedToId]) { return; } // rendered under its host
-      z.appendChild(renderCard(c, byId));
+      if (c.attachedToId != null && byId[c.attachedToId]) {
+        (childrenOf[c.attachedToId] = childrenOf[c.attachedToId] || []).push(c);
+      } else {
+        topLevel.push(c);
+      }
     });
+    z.appendChild(el("h3", "", "Battlefield (" + topLevel.length + ")"));
+    topLevel.forEach(function (c) { z.appendChild(renderCard(c, childrenOf)); });
     return z;
   }
 
@@ -194,7 +202,7 @@
     return z;
   }
 
-  function renderCard(c, byId) {
+  function renderCard(c, childrenOf) {
     var cls = "card";
     if (c.tapped) { cls += " tapped"; }
     if (c.sick) { cls += " sick"; }
@@ -220,13 +228,12 @@
       card.appendChild(ctrs);
     }
 
-    // Nest attached cards (equipment/auras) if we have the host's zone index.
-    if (byId && c.attachedCardIds && c.attachedCardIds.length) {
+    // Nest attached cards (equipment/auras) grouped by host, if any are attached to this one.
+    var children = childrenOf && childrenOf[c.id];
+    if (children && children.length) {
       var wrap = el("div", "attached");
-      c.attachedCardIds.forEach(function (aid) {
-        if (byId[aid]) { wrap.appendChild(renderCard(byId[aid], byId)); }
-      });
-      if (wrap.childNodes.length) { card.appendChild(wrap); }
+      children.forEach(function (child) { wrap.appendChild(renderCard(child, childrenOf)); });
+      card.appendChild(wrap);
     }
     return card;
   }

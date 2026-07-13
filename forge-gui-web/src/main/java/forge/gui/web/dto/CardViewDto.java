@@ -35,7 +35,6 @@ public final class CardViewDto {
     public boolean land;
     public boolean sick;
     public Integer attachedToId;
-    public List<Integer> attachedCardIds;
     public Map<String, Integer> counters;
 
     public static CardViewDto from(final CardView c) {
@@ -53,10 +52,11 @@ public final class CardViewDto {
         d.attacking = c.isAttacking();
         d.blocking = c.isBlocking();
         d.faceDown = c.isFaceDown();
-        d.sick = c.hasSickness();
+        // isSick(): summoning-sick *creature on the battlefield*, not hasSickness() which also
+        // flags a just-played land/artifact (isFirstTurnControlled && !haste, ignoring type/zone).
+        d.sick = c.isSick();
         final CardView attachedTo = c.getAttachedTo();
         d.attachedToId = attachedTo != null ? attachedTo.getId() : null;
-        d.attachedCardIds = idsOf(c.getAttachedCards());
         d.counters = counterMap(c.getCounters());
 
         // Characteristics that depend on the current face/state live on CardStateView.

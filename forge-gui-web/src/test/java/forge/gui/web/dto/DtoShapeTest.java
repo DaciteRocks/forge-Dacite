@@ -32,7 +32,7 @@ public class DtoShapeTest {
         c.creature = true;
         c.tapped = true;
         c.sick = true;
-        c.attachedCardIds = List.of(11, 12);
+        c.attachedToId = 42;
         c.counters = new LinkedHashMap<>();
         c.counters.put("P1P1", 3);
 
@@ -44,8 +44,7 @@ public class DtoShapeTest {
         Assert.assertTrue(n.get("tapped").asBoolean());
         Assert.assertTrue(n.get("sick").asBoolean());
         Assert.assertEquals(n.get("counters").get("P1P1").asInt(), 3);
-        Assert.assertEquals(n.get("attachedCardIds").size(), 2);
-        Assert.assertEquals(n.get("attachedCardIds").get(0).asInt(), 11);
+        Assert.assertEquals(n.get("attachedToId").asInt(), 42);
     }
 
     @Test
