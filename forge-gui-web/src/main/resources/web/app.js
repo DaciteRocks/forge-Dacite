@@ -214,16 +214,17 @@
 
   function handZone(p) {
     var z = el("div", "zone");
-    var revealed = p.hand || [];
+    var cards = p.hand || [];
     var mine = mySeatIds.indexOf(p.id) >= 0;
     z.appendChild(el("h3", "", "Hand (" + p.handSize + ")"));
-    revealed.forEach(function (c) { z.appendChild(renderCard(c)); });
-    if (!mine) {
-      for (var i = revealed.length; i < p.handSize; i++) {
-        z.appendChild(el("div", "card back", "🂠"));
-      }
+    // Hidden cards (an opponent's hand) arrive as face-down placeholders — show them as card backs;
+    // your own (and any genuinely revealed) cards render face-up.
+    cards.forEach(function (c) {
+      z.appendChild(c.faceDown ? el("div", "card back", "🂠") : renderCard(c));
+    });
+    for (var i = cards.length; i < p.handSize; i++) {
+      z.appendChild(el("div", "card back", "🂠"));
     }
-    // Your own mana pool is worth showing as clickable pips in the hand zone during payment.
     if (mine && p.manaPool) {
       var pool = manaPips(p.manaPool, true);
       if (pool) { z.appendChild(pool); }

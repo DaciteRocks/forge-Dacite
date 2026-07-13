@@ -34,7 +34,7 @@ public final class PlayerViewDto {
      * (command zone, battlefield, …) instead of showing a separate, duplicate "commanders" zone. */
     public List<Integer> commanderIds;
 
-    public static PlayerViewDto from(final PlayerView p) {
+    public static PlayerViewDto from(final PlayerView p, final Iterable<PlayerView> viewers) {
         if (p == null) {
             return null;
         }
@@ -44,11 +44,11 @@ public final class PlayerViewDto {
         d.life = p.getLife();
         d.ai = p.isAI();
         d.hasPriority = p.getHasPriority();
-        d.hand = CardViewDto.fromAll(p.getHand());
-        d.battlefield = CardViewDto.fromAll(p.getBattlefield());
-        d.graveyard = CardViewDto.fromAll(p.getGraveyard());
-        d.exile = CardViewDto.fromAll(p.getExile());
-        d.command = CardViewDto.fromAll(p.getCommand());
+        d.hand = CardViewDto.fromAll(p.getHand(), viewers);
+        d.battlefield = CardViewDto.fromAll(p.getBattlefield(), viewers);
+        d.graveyard = CardViewDto.fromAll(p.getGraveyard(), viewers);
+        d.exile = CardViewDto.fromAll(p.getExile(), viewers);
+        d.command = CardViewDto.fromAll(p.getCommand(), viewers);
         d.commanderIds = CardViewDto.idsOf(p.getCommanders());
         // getZoneSize null-guards the underlying collection (an empty zone's view can be null),
         // so this is safe even before/without the zone being populated.

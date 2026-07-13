@@ -5,6 +5,7 @@ import forge.game.player.PlayerView;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /** JSON projection of the whole {@link GameView} — the full-state snapshot pushed on every update. */
 public final class GameViewDto {
@@ -19,7 +20,8 @@ public final class GameViewDto {
     public List<StackItemDto> stack;
     public CombatDto combat;
 
-    public static GameViewDto from(final GameView g) {
+    /** @param viewers the local player(s) this view is for — used to hide cards they can't see. */
+    public static GameViewDto from(final GameView g, final Set<PlayerView> viewers) {
         if (g == null) {
             return null;
         }
@@ -36,10 +38,10 @@ public final class GameViewDto {
         d.players = new ArrayList<>();
         if (g.getPlayers() != null) {
             for (final PlayerView p : g.getPlayers()) {
-                d.players.add(PlayerViewDto.from(p));
+                d.players.add(PlayerViewDto.from(p, viewers));
             }
         }
-        d.stack = StackItemDto.fromAll(g.getStack());
+        d.stack = StackItemDto.fromAll(g.getStack(), viewers);
         d.combat = CombatDto.from(g.getCombat());
         return d;
     }

@@ -256,7 +256,8 @@ public final class WebGuiGame extends NetworkGuiGame {
     private void pushGameView() {
         final GameView gv = getGameView();
         if (gv != null) {
-            final GameViewDto dto = GameViewDto.from(gv);
+            // Pass the local players so the DTO hides cards they can't see (opponent hands, etc.).
+            final GameViewDto dto = GameViewDto.from(gv, getLocalPlayers());
             lastGameView = dto;
             send("setGameView", dto);
         }

@@ -10,11 +10,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * JSON projection of a {@link CardView} — the read-only, visibility-safe snapshot the engine
- * already produces for a remote GUI. Public fields are serialized directly by Jackson.
+ * JSON projection of a {@link CardView}. Public fields are serialized directly by Jackson.
  *
- * <p>Phase 0/1 carries the fields a board renderer needs. The View already enforces hidden
- * information (opponent hands, face-down cards), so mirroring it here is safe by construction.</p>
+ * <p><b>Hidden information:</b> a {@link CardView} exposes the real name/type even for cards the
+ * viewer isn't allowed to see (an opponent's hand, a face-down permanent). We must NOT leak those,
+ * so {@link #from} takes the local viewers and, when a card {@code !canBeShownToAny(viewers)},
+ * emits only a hidden placeholder (id + zone + tapped + faceDown) with no identity.</p>
  */
 public final class CardViewDto {
     public int id;
@@ -38,19 +39,27 @@ public final class CardViewDto {
     public Integer attachedToId;
     public Map<String, Integer> counters;
 
-    public static CardViewDto from(final CardView c) {
+    public static CardViewDto from(final CardView c, final Iterable<PlayerView> viewers) {
         if (c == null) {
             return null;
         }
         final CardViewDto d = new CardViewDto();
         d.id = c.getId();
-        d.name = c.getName();
-        d.text = c.getText();
-        d.damage = c.getDamage();
         d.zone = c.getZone() != null ? c.getZone().name() : null;
         final PlayerView controller = c.getController();
         d.controllerId = controller != null ? controller.getId() : null;
         d.tapped = c.isTapped();
+
+        // Hidden to the viewers (opponent's hand, a face-down permanent): emit only a placeholder —
+        // no name/type/text/P-T — so we don't leak information the player isn't allowed to see.
+        if (!c.canBeShownToAny(viewers)) {
+            d.faceDown = true;
+            return d;
+        }
+
+        d.name = c.getName();
+        d.text = c.getText();
+        d.damage = c.getDamage();
         d.attacking = c.isAttacking();
         d.blocking = c.isBlocking();
         d.faceDown = c.isFaceDown();
@@ -100,13 +109,13 @@ public final class CardViewDto {
         return out;
     }
 
-    static List<CardViewDto> fromAll(final Iterable<CardView> cards) {
+    static List<CardViewDto> fromAll(final Iterable<CardView> cards, final Iterable<PlayerView> viewers) {
         if (cards == null) {
             return null;
         }
         final List<CardViewDto> out = new ArrayList<>();
         for (final CardView c : cards) {
-            out.add(from(c));
+            out.add(from(c, viewers));
         }
         return out;
     }
