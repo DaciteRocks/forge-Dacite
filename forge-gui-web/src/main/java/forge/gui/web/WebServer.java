@@ -4,6 +4,8 @@ import io.javalin.Javalin;
 import io.javalin.http.staticfiles.Location;
 import io.javalin.util.JavalinBindException;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -35,6 +37,10 @@ public final class WebServer {
 
     /** Connection id currently bound to {@link #session}, so a stale old socket's close is ignored. */
     private volatile String activeConnectionId;
+
+    /** Every open connection's transport, so control can follow whichever device the user touches
+     * (a second device — e.g. the phone after the desktop — takes over by simply interacting). */
+    private final Map<String, Consumer<String>> transports = new ConcurrentHashMap<>();
 
     /** Serializes the connect/reconnect/close transitions so a stale close can't detach a session a
      * concurrent reconnect just rebound (a check-then-act on activeConnectionId alone races). */
@@ -85,6 +91,7 @@ public final class WebServer {
                         System.out.println("[web] send failed: " + e.getMessage());
                     }
                 };
+                transports.put(ctx.sessionId(), transport);
                 final boolean firstConnect;
                 final WebSession s;
                 synchronized (lifecycleLock) {
@@ -109,18 +116,33 @@ public final class WebServer {
                 }
             });
             ws.onMessage(ctx -> {
-                // Only accept input from the active connection, so a stale/duplicate socket can't
-                // inject spurious actions (pass/concede) into the live game. Stale replies are
-                // already harmless (their pending id is gone), but actions must be gated.
-                if (!ctx.sessionId().equals(activeConnectionId)) {
-                    return;
+                // Control follows the device being used: if a message arrives from a non-active
+                // connection, make it active and redirect output to it, then resync so it's current.
+                // This lets a second device (the phone after the desktop) take over just by tapping.
+                boolean tookOver = false;
+                final WebSession s;
+                synchronized (lifecycleLock) {
+                    s = session;
+                    if (s != null && !ctx.sessionId().equals(activeConnectionId)) {
+                        final Consumer<String> t = transports.get(ctx.sessionId());
+                        if (t != null) {
+                            activeConnectionId = ctx.sessionId();
+                            cancelGraceTask();
+                            s.rebind(t);
+                            tookOver = true;
+                        }
+                    }
                 }
-                final WebSession s = session;
+                if (tookOver) {
+                    System.out.println("[web] control taken over by: " + ctx.sessionId());
+                    onReconnect.accept(s); // bring the now-active device up to date
+                }
                 if (s != null) {
                     s.onClientMessage(ctx.message());
                 }
             });
             ws.onClose(ctx -> {
+                transports.remove(ctx.sessionId());
                 synchronized (lifecycleLock) {
                     // Re-check under the lock: a stale socket closing after a reconnect must not
                     // detach the session the reconnect just rebound.
