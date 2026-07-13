@@ -35,6 +35,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -256,12 +257,23 @@ public final class WebGuiGame extends NetworkGuiGame {
      * so this is the only place the live GameView is read; the snapshot is cached for reconnects. */
     private void pushGameView() {
         final GameView gv = getGameView();
-        if (gv != null) {
-            // Pass the local players so the DTO hides cards they can't see (opponent hands, etc.).
-            final GameViewDto dto = GameViewDto.from(gv, getLocalPlayers());
-            lastGameView = dto;
-            send("setGameView", dto);
+        if (gv == null) {
+            return;
         }
+        // Pass the local players so the DTO hides cards they can't see (opponent hands, etc.).
+        // canBeShownToAny(empty) is fail-OPEN (shows everything), so never push with no known viewer:
+        // fall back to the captured seat, and if we don't even know that yet, skip this push — the
+        // next one (once the seat is registered) sends the full state. Fail closed, never leak.
+        Set<PlayerView> viewers = getLocalPlayers();
+        if (viewers == null || viewers.isEmpty()) {
+            if (localPlayer == null) {
+                return;
+            }
+            viewers = Collections.singleton(localPlayer);
+        }
+        final GameViewDto dto = GameViewDto.from(gv, viewers);
+        lastGameView = dto;
+        send("setGameView", dto);
     }
 
     // ── State ────────────────────────────────────────────────────────────────
