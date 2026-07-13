@@ -4,6 +4,8 @@ import forge.gui.GuiBase;
 import forge.localinstance.properties.ForgePreferences.FPref;
 import forge.model.FModel;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
  * Phase 0 entry point. Installs the headless {@link WebGuiBase}, initializes Forge (loads card
  * data), starts the web host, and — when a browser connects — boots a Commander-vs-AI match with a
@@ -33,11 +35,17 @@ public final class WebMatchLauncher {
         System.out.println("[web] Forge initialized.");
 
         final WebServer server = new WebServer(port);
+        // Phase 0 hosts a single game. Guard so a reconnect or a second browser doesn't boot a
+        // second match into the same JVM (proper reconnect/hand-off is Phase 4).
+        final AtomicBoolean gameStarted = new AtomicBoolean(false);
         server.setOnConnect(session -> {
             guiBase.setActiveSession(session);
-            final WebGuiGame gui = new WebGuiGame(session);
-            System.out.println("[web] session ready; starting Commander vs AI.");
-            WebGameHost.startCommanderVsAi(gui);
+            if (gameStarted.compareAndSet(false, true)) {
+                System.out.println("[web] session ready; starting Commander vs AI.");
+                WebGameHost.startCommanderVsAi(new WebGuiGame(session));
+            } else {
+                System.out.println("[web] game already running; ignoring extra connection (reconnect is Phase 4).");
+            }
         });
         server.start();
 

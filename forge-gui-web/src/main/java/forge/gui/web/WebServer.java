@@ -3,6 +3,8 @@ package forge.gui.web;
 import io.javalin.Javalin;
 import io.javalin.http.staticfiles.Location;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -19,8 +21,12 @@ public final class WebServer {
     /** Notified when a browser connects; receives the freshly-created session for that connection. */
     private Consumer<WebSession> onConnect = s -> { };
 
-    /** The single active session (Phase 0). Null until a browser connects. */
-    private volatile WebSession session;
+    /** Connected sessions keyed by WebSocket connection id, so inbound messages/closes route to the
+     * right session (a shared field would misroute replies and let a reconnect clobber a live game). */
+    private final Map<String, WebSession> sessions = new ConcurrentHashMap<>();
+
+    /** Most recently connected session (Phase 0 single-client convenience). */
+    private volatile WebSession lastSession;
 
     public WebServer(final int port) {
         this.port = port;
@@ -31,7 +37,7 @@ public final class WebServer {
     }
 
     public WebSession getSession() {
-        return session;
+        return lastSession;
     }
 
     public void start() {
@@ -46,27 +52,30 @@ public final class WebServer {
 
         app.ws("/game", ws -> {
             ws.onConnect(ctx -> {
-                session = new WebSession(text -> {
+                final WebSession newSession = new WebSession(text -> {
                     try {
                         ctx.send(text);
                     } catch (final Exception e) {
                         System.out.println("[web] send failed: " + e.getMessage());
                     }
                 });
+                sessions.put(ctx.sessionId(), newSession);
+                lastSession = newSession;
                 System.out.println("[web] browser connected: " + ctx.sessionId());
-                onConnect.accept(session);
+                onConnect.accept(newSession);
             });
             ws.onMessage(ctx -> {
-                if (session != null) {
-                    session.onClientMessage(ctx.message());
+                final WebSession s = sessions.get(ctx.sessionId());
+                if (s != null) {
+                    s.onClientMessage(ctx.message());
                 }
             });
             ws.onClose(ctx -> {
                 System.out.println("[web] browser disconnected: " + ctx.sessionId());
-                if (session != null) {
-                    session.onClose();
+                final WebSession closed = sessions.remove(ctx.sessionId());
+                if (closed != null) {
+                    closed.onClose();
                 }
-                session = null;
             });
         });
 

@@ -8,6 +8,7 @@ import org.testng.annotations.Test;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -35,7 +36,8 @@ public class WebSessionTest {
 
     @Test
     public void sendAndWaitCorrelatesReplyById() throws Exception {
-        final List<String> sent = new ArrayList<>();
+        // Written by the asker thread (via sendAndWait) and read by this thread — needs a thread-safe list.
+        final List<String> sent = new CopyOnWriteArrayList<>();
         final WebSession session = new WebSession(sent::add);
         final AtomicReference<JsonNode> result = new AtomicReference<>();
 
@@ -65,7 +67,8 @@ public class WebSessionTest {
 
     @Test
     public void onCloseUnblocksPendingQuestions() throws Exception {
-        final List<String> sent = new ArrayList<>();
+        // Written by the asker thread (via sendAndWait) and read by this thread — needs a thread-safe list.
+        final List<String> sent = new CopyOnWriteArrayList<>();
         final WebSession session = new WebSession(sent::add);
         final AtomicReference<JsonNode> result = new AtomicReference<>();
         final AtomicBoolean done = new AtomicBoolean(false);
@@ -86,14 +89,18 @@ public class WebSessionTest {
 
     @Test
     public void spontaneousActionMessageIsIgnoredNotThrown() {
-        final WebSession session = new WebSession(text -> { });
+        final List<String> sent = new ArrayList<>();
+        final WebSession session = new WebSession(sent::add);
         session.onClientMessage("{\"type\":\"passPriority\"}"); // Phase 2 routes this; Phase 0 no-ops
+        Assert.assertTrue(sent.isEmpty(), "an unsolicited action must not trigger any outbound message");
     }
 
     @Test
     public void malformedClientMessageIsIgnored() {
-        final WebSession session = new WebSession(text -> { });
+        final List<String> sent = new ArrayList<>();
+        final WebSession session = new WebSession(sent::add);
         session.onClientMessage("not json at all");
+        Assert.assertTrue(sent.isEmpty(), "malformed input must be swallowed, not echoed or answered");
     }
 
     private static long awaitFirstMessageId(final List<String> sent) throws Exception {

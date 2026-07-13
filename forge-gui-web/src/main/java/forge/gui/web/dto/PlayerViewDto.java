@@ -1,7 +1,7 @@
 package forge.gui.web.dto;
 
-import forge.game.card.CardView;
 import forge.game.player.PlayerView;
+import forge.game.zone.ZoneType;
 
 import java.util.List;
 
@@ -40,25 +40,11 @@ public final class PlayerViewDto {
         d.graveyard = CardViewDto.fromAll(p.getGraveyard());
         d.exile = CardViewDto.fromAll(p.getExile());
         d.command = CardViewDto.fromAll(p.getCommand());
-        d.commanders = CardViewDto.fromAll(commandersOf(p));
-        d.handSize = count(p.getHand());
-        d.librarySize = count(p.getLibrary());
+        d.commanders = CardViewDto.fromAll(p.getCommanders());
+        // getZoneSize null-guards the underlying collection (an empty zone's view can be null),
+        // so this is safe even before/without the zone being populated.
+        d.handSize = p.getZoneSize(ZoneType.Hand);
+        d.librarySize = p.getZoneSize(ZoneType.Library);
         return d;
-    }
-
-    private static Iterable<CardView> commandersOf(final PlayerView p) {
-        final List<CardView> commanders = p.getCommanders();
-        return commanders;
-    }
-
-    private static int count(final Iterable<CardView> cards) {
-        if (cards == null) {
-            return 0;
-        }
-        int n = 0;
-        for (final CardView ignored : cards) {
-            n++;
-        }
-        return n;
     }
 }

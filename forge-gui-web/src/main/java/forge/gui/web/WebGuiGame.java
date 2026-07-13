@@ -50,11 +50,18 @@ public final class WebGuiGame extends NetworkGuiGame {
         this.session = session;
     }
 
+    /** Null-safe notification send — the session may be null (e.g. a GUI created before connect). */
+    private void send(final String type, final Object payload) {
+        if (session != null) {
+            session.send(type, payload);
+        }
+    }
+
     /** Push the current full game state, if we have one. */
     private void pushGameView() {
         final GameView gv = getGameView();
-        if (gv != null && session != null) {
-            session.send("setGameView", GameViewDto.from(gv));
+        if (gv != null) {
+            send("setGameView", GameViewDto.from(gv));
         }
     }
 
@@ -74,7 +81,7 @@ public final class WebGuiGame extends NetworkGuiGame {
                 myIds.add(p.getId());
             }
         }
-        session.send("openView", myIds);
+        send("openView", myIds);
         pushGameView();
     }
 
@@ -96,7 +103,7 @@ public final class WebGuiGame extends NetworkGuiGame {
         final Map<String, Object> payload = new HashMap<>();
         payload.put("playerId", playerView != null ? playerView.getId() : null);
         payload.put("message", message);
-        session.send("prompt", payload);
+        send("prompt", payload);
     }
 
     @Override
@@ -106,7 +113,7 @@ public final class WebGuiGame extends NetworkGuiGame {
         payload.put("playerId", playerView != null ? playerView.getId() : null);
         payload.put("message", message);
         payload.put("cardId", card != null ? card.getId() : null);
-        session.send("prompt", payload);
+        send("prompt", payload);
     }
 
     @Override
@@ -119,7 +126,7 @@ public final class WebGuiGame extends NetworkGuiGame {
         payload.put("enable1", enable1);
         payload.put("enable2", enable2);
         payload.put("focus1", focus1);
-        session.send("buttons", payload);
+        send("buttons", payload);
     }
 
     @Override
@@ -127,7 +134,7 @@ public final class WebGuiGame extends NetworkGuiGame {
         final Map<String, Object> payload = new HashMap<>();
         payload.put("title", title);
         payload.put("message", message);
-        session.send("message", payload);
+        send("message", payload);
     }
 
     @Override
@@ -157,7 +164,7 @@ public final class WebGuiGame extends NetworkGuiGame {
 
     @Override
     public void finishGame() {
-        session.send("finishGame", null);
+        send("finishGame", null);
     }
 
     // Render-neutral notifications — no-op in Phase 0.
@@ -218,13 +225,27 @@ public final class WebGuiGame extends NetworkGuiGame {
     @Override
     public GameEntityView chooseSingleEntityForEffect(final String title, final List<? extends GameEntityView> optionList,
                                                       final DelayedReveal delayedReveal, final boolean isOptional) {
+        // Mandatory choice auto-picks the first option; optional returns null (skip).
+        if (!isOptional && optionList != null && !optionList.isEmpty()) {
+            return optionList.get(0);
+        }
         return null;
     }
 
     @Override
     public List<GameEntityView> chooseEntitiesForEffect(final String title, final List<? extends GameEntityView> optionList,
                                                         final int min, final int max, final DelayedReveal delayedReveal) {
-        return null;
+        // Auto-pick the required minimum so mandatory (min>=1) effects don't silently under-select.
+        final List<GameEntityView> result = new ArrayList<>();
+        if (optionList != null) {
+            for (final GameEntityView entity : optionList) {
+                if (result.size() >= min) {
+                    break;
+                }
+                result.add(entity);
+            }
+        }
+        return result;
     }
 
     @Override
@@ -274,7 +295,7 @@ public final class WebGuiGame extends NetworkGuiGame {
         final Map<String, Object> payload = new HashMap<>();
         payload.put("title", title);
         payload.put("message", message);
-        session.send("message", payload);
+        send("message", payload);
     }
 
     @Override
@@ -286,7 +307,18 @@ public final class WebGuiGame extends NetworkGuiGame {
     @Override
     public <T> List<T> getChoices(final String message, final int min, final int max, final List<T> choices,
                                   final List<T> selected, final FSerializableFunction<T, String> display) {
-        return null;
+        // The engine does NOT null-guard getChoices — returning null would NPE the game thread
+        // (e.g. opening-hand abilities via many()). Auto-pick the required minimum; Phase 2 prompts.
+        final List<T> result = new ArrayList<>();
+        if (choices != null) {
+            for (final T choice : choices) {
+                if (result.size() >= min) {
+                    break;
+                }
+                result.add(choice);
+            }
+        }
+        return result;
     }
 
     @Override
