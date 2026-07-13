@@ -59,7 +59,14 @@ public final class WebGuiBase implements IGuiBase {
 
     @Override
     public String getAssetsDir() {
-        // Mirror GuiDesktop: dev/git builds run from a module dir and reach res/ via ../forge-gui/.
+        // Locate the dir containing res/ across the working dirs we might run from
+        // (repo root, the forge-gui-web module dir, or a packaged layout).
+        for (final String candidate : new String[] {"", "forge-gui/", "../forge-gui/"}) {
+            if (new File(candidate + "res").isDirectory()) {
+                return candidate;
+            }
+        }
+        // Fall back to GuiDesktop's rule for packaged/release layouts.
         return StringUtils.containsIgnoreCase(BuildInfo.getVersionString(), "git") ? "../forge-gui/" : "";
     }
 
