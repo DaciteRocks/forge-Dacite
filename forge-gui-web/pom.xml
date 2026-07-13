@@ -20,11 +20,24 @@
 
     <dependencies>
         <!-- Forge GUI layer: pulls in forge-ai -> forge-game -> forge-core,
-             plus the net protocol (ProtocolMethod), the View model, and game-mode logic. -->
+             plus the net protocol (ProtocolMethod), the View model, and game-mode logic.
+             Excludes forge-gui's transitive Jetty 9.4 / javax.servlet: Javalin 6 needs Jetty 11
+             (jakarta.servlet), and having both on the classpath makes the old Jetty win and throw
+             NoSuchMethodError at server start. We never invoke Forge's own Jetty-based features. -->
         <dependency>
             <groupId>forge</groupId>
             <artifactId>forge-gui</artifactId>
             <version>${project.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.eclipse.jetty</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>javax.servlet</groupId>
+                    <artifactId>javax.servlet-api</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- Embedded HTTP + WebSocket host (bundles Jetty). -->
@@ -57,4 +70,52 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Build a self-contained runnable jar (all deps + merged service files) so the client
+                 launches with `java -jar` — no Maven at runtime, which sidesteps the ${revision}
+                 parent-resolution problem that blocks single-module runs. Build it with the reactor:
+                   mvn -pl forge-gui-web -am -DskipTests package
+                 then run from the repo root (so res/ card data resolves):
+                   java -jar forge-gui-web/target/forge-gui-web-*-jar-with-dependencies.jar -->
+            <plugin>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <configuration>
+                    <attach>false</attach>
+                    <descriptors>
+                        <descriptor>src/main/assembly/jar-with-dependencies.xml</descriptor>
+                    </descriptors>
+                    <archive>
+                        <manifestEntries>
+                            <Main-Class>forge.gui.web.WebMatchLauncher</Main-Class>
+                            <!-- The engine reflects into these JDK packages at runtime (mirrors the
+                                 root pom's surefire argLine); the manifest opens them to this jar. -->
+                            <Add-Opens>
+<![CDATA[
+  java.base/java.lang
+  java.base/java.time
+  java.base/java.text
+  java.base/java.util
+  java.base/java.util.regex
+  java.base/java.util.stream
+  java.base/java.lang.reflect
+  java.desktop/javax.imageio.spi
+]]>
+                            </Add-Opens>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-runnable-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

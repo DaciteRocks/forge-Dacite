@@ -2,6 +2,7 @@ package forge.gui.web;
 
 import io.javalin.Javalin;
 import io.javalin.http.staticfiles.Location;
+import io.javalin.util.JavalinBindException;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -65,8 +66,8 @@ public final class WebServer {
         return session;
     }
 
-    public void start() {
-        app = Javalin.create(config -> {
+    private Javalin buildApp() {
+        final Javalin built = Javalin.create(config -> {
             // Serve index.html + app.js from the jar/classpath under /web.
             config.staticFiles.add(staticFiles -> {
                 staticFiles.hostedPath = "/";
@@ -75,7 +76,7 @@ public final class WebServer {
             });
         });
 
-        app.ws("/game", ws -> {
+        built.ws("/game", ws -> {
             ws.onConnect(ctx -> {
                 final Consumer<String> transport = text -> {
                     try {
@@ -131,9 +132,30 @@ public final class WebServer {
                 }
             });
         });
+        return built;
+    }
 
-        app.start(port);
-        System.out.println("[web] Forge web client on http://<this-machine-lan-ip>:" + port + "  (open in your phone browser)");
+    /** Start the host, trying the configured port first and falling back to the next few if it is
+     * already in use (common on shared dev machines — e.g. another service on 7070), so the launch
+     * doesn't just crash. Prints the port it actually bound. */
+    public void start() {
+        final int maxAttempts = 10;
+        JavalinBindException lastError = null;
+        for (int candidate = port; candidate < port + maxAttempts; candidate++) {
+            app = buildApp();
+            try {
+                app.start(candidate);
+                System.out.println("[web] Forge web client on http://<this-machine-lan-ip>:" + candidate
+                        + "  (open in your phone browser)");
+                return;
+            } catch (final JavalinBindException e) {
+                lastError = e;
+                System.out.println("[web] port " + candidate + " is in use; trying " + (candidate + 1) + "…");
+                app.stop();
+            }
+        }
+        throw lastError != null ? lastError
+                : new IllegalStateException("could not bind any port in [" + port + ", " + (port + maxAttempts) + ")");
     }
 
     /** Cancel any pending abandonment timer (a browser (re)connected in time). Caller holds the lock. */
