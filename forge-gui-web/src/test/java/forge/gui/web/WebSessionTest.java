@@ -103,6 +103,41 @@ public class WebSessionTest {
         Assert.assertTrue(sent.isEmpty(), "malformed input must be swallowed, not echoed or answered");
     }
 
+    @Test
+    public void spontaneousActionIsRoutedToActionHandlerWithTypeAndPayload() {
+        final List<String> routed = new ArrayList<>();
+        final WebSession session = new WebSession(text -> { });
+        session.setActionHandler((type, payload) ->
+                routed.add(type + ":" + (payload != null ? payload.path("cardId").asInt(-1) : -1)));
+
+        session.onClientMessage("{\"type\":\"selectCard\",\"payload\":{\"cardId\":42}}");
+
+        Assert.assertEquals(routed.size(), 1, "the action should be routed exactly once");
+        Assert.assertEquals(routed.get(0), "selectCard:42", "type and payload must reach the handler intact");
+    }
+
+    @Test
+    public void replyIsCompletedNotRoutedAsAction() throws Exception {
+        // A reply to a pending question must complete its future, never fire the action handler.
+        final List<String> sent = new CopyOnWriteArrayList<>();
+        final List<String> actions = new CopyOnWriteArrayList<>();
+        final WebSession session = new WebSession(sent::add);
+        session.setActionHandler((type, payload) -> actions.add(type));
+        final AtomicReference<JsonNode> result = new AtomicReference<>();
+
+        final Thread asker = new Thread(() ->
+                result.set(session.sendAndWait("confirm", null, 5, TimeUnit.SECONDS)));
+        asker.start();
+        final long id = awaitFirstMessageId(sent);
+
+        session.onClientMessage("{\"replyTo\":" + id + ",\"value\":true}");
+        asker.join(3000);
+
+        Assert.assertTrue(actions.isEmpty(), "a reply must not be treated as a spontaneous action");
+        Assert.assertNotNull(result.get(), "sendAndWait should return the reply");
+        Assert.assertTrue(result.get().asBoolean(), "the reply value should round-trip");
+    }
+
     private static long awaitFirstMessageId(final List<String> sent) throws Exception {
         final long deadline = System.currentTimeMillis() + 2000;
         while (sent.isEmpty() && System.currentTimeMillis() < deadline) {

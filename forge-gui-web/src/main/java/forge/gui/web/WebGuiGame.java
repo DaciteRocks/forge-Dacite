@@ -14,7 +14,9 @@ import forge.game.player.PlayerView;
 import forge.game.spellability.SpellAbilityView;
 import forge.game.zone.ZoneType;
 import forge.gamemodes.net.NetworkGuiGame;
+import forge.gui.FThreads;
 import forge.gui.web.dto.GameViewDto;
+import forge.interfaces.IGameController;
 import forge.item.PaperCard;
 import forge.localinstance.skin.FSkinProp;
 import forge.player.PlayerZoneUpdate;
@@ -23,11 +25,15 @@ import forge.trackable.TrackableCollection;
 import forge.util.FSerializableFunction;
 import forge.util.ITriggerEvent;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Server-side {@link forge.gui.interfaces.IGuiGame} that renders to a browser over WebSocket + JSON.
@@ -44,10 +50,16 @@ import java.util.Map;
  * Phases 2–3. See {@code docs/Development/Web-Client-Spec.md}.</p>
  */
 public final class WebGuiGame extends NetworkGuiGame {
+    /** How long a blocking question waits for the human before giving up (returns the safe default). */
+    private static final long DECISION_TIMEOUT_MINUTES = 60;
+
     private final WebSession session;
 
     public WebGuiGame(final WebSession session) {
         this.session = session;
+        if (session != null) {
+            session.setActionHandler(this::onClientAction);
+        }
     }
 
     /** Null-safe notification send — the session may be null (e.g. a GUI created before connect). */
@@ -55,6 +67,110 @@ public final class WebGuiGame extends NetworkGuiGame {
         if (session != null) {
             session.send(type, payload);
         }
+    }
+
+    /** Ask the browser a question and block until the reply (or timeout/disconnect → null). */
+    private JsonNode ask(final String type, final Object payload) {
+        if (session == null) {
+            return null;
+        }
+        return session.sendAndWait(type, payload, DECISION_TIMEOUT_MINUTES, TimeUnit.MINUTES);
+    }
+
+    // ── Inbound player actions (browser → IGameController) ────────────────────
+    // A click in the browser arrives here; we marshal to the game (EDT) thread and invoke the
+    // controller, exactly as the Netty server's GameProtocolHandler does for a native net client.
+
+    private void onClientAction(final String type, final JsonNode payload) {
+        FThreads.invokeInEdtNowOrLater(() -> dispatchAction(type, payload));
+    }
+
+    private void dispatchAction(final String type, final JsonNode payload) {
+        final IGameController controller = getGameController();
+        if (controller == null) {
+            return;
+        }
+        try {
+            switch (type) {
+                case "selectButtonOk": controller.selectButtonOk(); break;
+                case "selectButtonCancel": controller.selectButtonCancel(); break;
+                case "passPriority": controller.passPriority(); break;
+                case "passPriorityUntilEndOfTurn": controller.passPriorityUntilEndOfTurn(); break;
+                case "concede": controller.concede(); break;
+                case "undoLastAction": controller.undoLastAction(); break;
+                case "alphaStrike": controller.alphaStrike(); break;
+                case "selectCard": {
+                    final CardView card = findCard(intField(payload, "cardId"));
+                    if (card != null) {
+                        controller.selectCard(card, Collections.emptyList(), null);
+                    }
+                    break;
+                }
+                case "selectPlayer": {
+                    final PlayerView player = findPlayer(intField(payload, "playerId"));
+                    if (player != null) {
+                        controller.selectPlayer(player, null);
+                    }
+                    break;
+                }
+                case "useMana": controller.useMana((byte) intField(payload, "color")); break;
+                default: System.out.println("[web] unhandled action: " + type);
+            }
+        } catch (final Exception e) {
+            System.out.println("[web] action '" + type + "' failed: " + e.getMessage());
+        }
+    }
+
+    private static int intField(final JsonNode payload, final String field) {
+        if (payload == null) {
+            return -1;
+        }
+        final JsonNode n = payload.get(field);
+        return n != null && n.canConvertToInt() ? n.asInt() : -1;
+    }
+
+    /** Find a card by id across every player's visible zones in the current game view. */
+    private CardView findCard(final int id) {
+        final GameView gv = getGameView();
+        if (id < 0 || gv == null || gv.getPlayers() == null) {
+            return null;
+        }
+        for (final PlayerView p : gv.getPlayers()) {
+            final CardView c = firstWithId(id, p.getHand(), p.getBattlefield(), p.getCommand(),
+                    p.getGraveyard(), p.getExile(), p.getCommanders());
+            if (c != null) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    @SafeVarargs
+    private static CardView firstWithId(final int id, final Iterable<CardView>... zones) {
+        for (final Iterable<CardView> zone : zones) {
+            if (zone == null) {
+                continue;
+            }
+            for (final CardView c : zone) {
+                if (c != null && c.getId() == id) {
+                    return c;
+                }
+            }
+        }
+        return null;
+    }
+
+    private PlayerView findPlayer(final int id) {
+        final GameView gv = getGameView();
+        if (id < 0 || gv == null || gv.getPlayers() == null) {
+            return null;
+        }
+        for (final PlayerView p : gv.getPlayers()) {
+            if (p.getId() == id) {
+                return p;
+            }
+        }
+        return null;
     }
 
     /** Push the current full game state, if we have one. */
@@ -167,6 +283,29 @@ public final class WebGuiGame extends NetworkGuiGame {
         send("finishGame", null);
     }
 
+    // Selectable-card affordances: tell the browser which cards the engine will accept a click on,
+    // so it can highlight/enable them. Clicking a non-selectable card is harmless (the engine's
+    // input simply ignores it), but the hint makes the legal plays obvious.
+    @Override
+    public void setSelectables(final Iterable<CardView> cards) {
+        super.setSelectables(cards);
+        final List<Integer> ids = new ArrayList<>();
+        if (cards != null) {
+            for (final CardView c : cards) {
+                if (c != null) {
+                    ids.add(c.getId());
+                }
+            }
+        }
+        send("selectables", ids);
+    }
+
+    @Override
+    public void clearSelectables() {
+        super.clearSelectables();
+        send("selectables", Collections.emptyList());
+    }
+
     // Render-neutral notifications — no-op in Phase 0.
     @Override public void alertUser() { }
     @Override public void enableOverlay() { }
@@ -206,7 +345,34 @@ public final class WebGuiGame extends NetworkGuiGame {
     @Override
     public SpellAbilityView getAbilityToPlay(final CardView hostCard, final List<SpellAbilityView> abilities,
                                              final ITriggerEvent triggerEvent) {
-        return null;
+        if (abilities == null || abilities.isEmpty()) {
+            return null;
+        }
+        if (abilities.size() == 1) {
+            return abilities.get(0); // no ambiguity — nothing to ask
+        }
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("hostCardId", hostCard != null ? hostCard.getId() : null);
+        payload.put("hostName", hostCard != null ? hostCard.getName() : null);
+        final List<Map<String, Object>> options = new ArrayList<>();
+        for (int i = 0; i < abilities.size(); i++) {
+            final Map<String, Object> option = new HashMap<>();
+            option.put("index", i);
+            option.put("description", abilities.get(i).getDescription());
+            options.add(option);
+        }
+        payload.put("abilities", options);
+
+        final JsonNode reply = ask("getAbilityToPlay", payload);
+        if (reply == null) {
+            return null; // timed out / disconnected / cancelled
+        }
+        final JsonNode index = reply.get("index");
+        if (index == null || !index.canConvertToInt()) {
+            return null;
+        }
+        final int i = index.asInt();
+        return i >= 0 && i < abilities.size() ? abilities.get(i) : null;
     }
 
     @Override

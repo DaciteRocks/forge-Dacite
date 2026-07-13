@@ -21,7 +21,12 @@
     .player .tag { font-size:11px; color:var(--muted); }
     .zones { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; padding:10px 12px; }
     .zone h3 { margin:0 0 6px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }
-    .card { border:1px solid var(--line); border-radius:8px; padding:6px 8px; margin-bottom:6px; background:#171d26; }
+    #actionbar { display:flex; gap:8px; flex-wrap:wrap; padding:8px 14px; border-bottom:1px solid var(--line); background:#161c26; }
+    #actionbar button { background:#2a3444; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:7px 12px; font-weight:600; }
+    #actionbar button.danger { background:#3a1f24; border-color:#5a2f38; }
+    .card { border:1px solid var(--line); border-radius:8px; padding:6px 8px; margin-bottom:6px; background:#171d26; cursor:pointer; }
+    .card:active { filter:brightness(1.25); }
+    .card.selectable { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
     .card.tapped { transform:rotate(3deg); opacity:.8; }
     .card.sick { border-style:dashed; }
     .card.attacking { border-color:#ff6b6b; box-shadow:0 0 0 1px #ff6b6b inset; }
@@ -44,7 +49,14 @@
     .combat { margin:10px 14px; }
     .combat h3 { margin:0 0 6px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#ff6b6b; }
     .combat .band { border:1px solid #45322f; border-radius:8px; padding:6px 10px; margin-bottom:6px; background:#22181a; }
+    .pip.clickable { cursor:pointer; }
     .count { color:var(--muted); font-size:12px; }
+    #modal { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; padding:20px; }
+    #modal.show { display:flex; }
+    .dialog { background:var(--panel); border:1px solid var(--line); border-radius:12px; max-width:420px; width:100%; padding:16px; }
+    .dialog h3 { margin:0 0 10px; }
+    .dialog .opt { display:block; width:100%; text-align:left; background:#222d3b; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+    .dialog .opt:active { filter:brightness(1.25); }
   </style>
 </head>
 <body>
@@ -55,9 +67,11 @@
   </header>
   <div id="prompt"></div>
   <div id="buttons"></div>
+  <div id="actionbar"></div>
   <div id="stackWrap"></div>
   <div id="combatWrap"></div>
   <div id="players"></div>
+  <div id="modal"></div>
   <script src="app.js"></script>
 </body>
 </html>

@@ -7,6 +7,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -29,8 +30,16 @@ public final class WebSession {
     private final AtomicLong nextRequestId = new AtomicLong(1);
     private final ConcurrentHashMap<Long, CompletableFuture<JsonNode>> pending = new ConcurrentHashMap<>();
 
+    /** Routes a spontaneous player action {@code (type, payload)} to the game (set by WebGuiGame). */
+    private volatile BiConsumer<String, JsonNode> actionHandler;
+
     public WebSession(final Consumer<String> transport) {
         this.transport = transport;
+    }
+
+    /** Register the handler that turns inbound player actions into {@code IGameController} calls. */
+    public void setActionHandler(final BiConsumer<String, JsonNode> handler) {
+        this.actionHandler = handler;
     }
 
     /** A message envelope: {@code {"type": ..., "id": ..., "payload": ...}}. */
@@ -87,9 +96,15 @@ public final class WebSession {
                 }
                 return;
             }
-            // Otherwise it's a spontaneous player action (passPriority, selectCard, ...).
-            // Phase 2 will route node.get("type")/node.get("payload") to the IGameController.
-            System.out.println("[web] client action (unhandled in Phase 0): " + json);
+            // Otherwise it's a spontaneous player action (passPriority, selectCard, ...): route it
+            // to the game controller via the registered handler, if any.
+            final BiConsumer<String, JsonNode> handler = actionHandler;
+            final JsonNode typeNode = node.get("type");
+            if (handler != null && typeNode != null && typeNode.isTextual()) {
+                handler.accept(typeNode.asText(), node.get("payload"));
+            } else {
+                System.out.println("[web] client action (no handler): " + json);
+            }
         } catch (final Exception e) {
             System.out.println("[web] failed to parse client message: " + e.getMessage());
         }

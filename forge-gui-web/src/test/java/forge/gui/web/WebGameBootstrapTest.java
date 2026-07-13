@@ -93,10 +93,6 @@ public class WebGameBootstrapTest {
 
         Assert.assertNotNull(gameView, "engine should emit a setGameView with the dealt board");
 
-        // Phase is part of the header the browser renders — assert it's populated. (Turn is
-        // intentionally not asserted: cards are dealt before turn 1's untap, so turn is still 0 here.)
-        Assert.assertFalse(gameView.path("phase").asText().isEmpty(), "the current phase should be reported");
-
         final JsonNode players = gameView.get("players");
         Assert.assertEquals(players.size(), 2, "Commander vs AI has exactly 2 players");
         boolean sawCommander = false;
@@ -116,6 +112,32 @@ public class WebGameBootstrapTest {
             }
         }
         Assert.assertTrue(sawCommander, "at least one commander card should be present in the view");
+
+        // Phase 2: prove the interaction loop reaches the engine. The dealt board sits at the
+        // mulligan decision (turn 0, no phase). Repeatedly send selectButtonOk — the universal
+        // "proceed" click that keeps the opening hand at mulligan and passes priority afterwards —
+        // and assert the game advances into a real turn/phase. That can only happen if the action
+        // routed through WebGuiGame -> IGameController -> the blocking input latch.
+        final String startPhase = phaseKey(gameView);
+        JsonNode advancedView = null;
+        final long passDeadline = System.currentTimeMillis() + 60_000;
+        while (System.currentTimeMillis() < passDeadline) {
+            final JsonNode gv = latestSetGameView(recorded);
+            if (gv != null && !phaseKey(gv).equals(startPhase)) {
+                advancedView = gv;
+                break;
+            }
+            session.onClientMessage("{\"type\":\"selectButtonOk\"}");
+            Thread.sleep(150);
+        }
+        Assert.assertNotNull(advancedView, "clicking OK from the web client should advance the game past " + startPhase);
+        final String advancedPhase = advancedView.path("phase").asText();
+        Assert.assertNotEquals(advancedPhase, "null", "the advanced view should report a real phase");
+        Assert.assertFalse(advancedPhase.isEmpty(), "the advanced view should report a real phase");
+    }
+
+    private static String phaseKey(final JsonNode gameView) {
+        return gameView.path("turn").asInt() + ":" + gameView.path("phase").asText();
     }
 
     private static boolean allPlayersHaveLibrary(final JsonNode gameView) {
