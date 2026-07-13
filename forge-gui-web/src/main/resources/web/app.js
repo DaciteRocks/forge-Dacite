@@ -602,6 +602,10 @@
 
   // ── Lobby / setup screen ──────────────────────────────────────────────────────────────────────
   function renderSetup(payload) {
+    // Returning to the lobby (e.g. after a concede): clear any leftover in-game UI behind the setup.
+    closeModal();
+    buttonsEl.innerHTML = "";
+    promptEl.textContent = "";
     var decks = (payload && payload.decks) || [{ id: "random", label: "🎲 Random" }];
     var maxAi = (payload && payload.maxAi) || 5;
     var aiCount = Math.max(1, Math.min(maxAi, (payload && payload.defaultAi) || 1));

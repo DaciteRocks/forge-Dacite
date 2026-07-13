@@ -13,6 +13,7 @@ import forge.game.player.IHasIcon;
 import forge.game.player.PlayerView;
 import forge.game.spellability.SpellAbilityView;
 import forge.game.zone.ZoneType;
+import forge.gamemodes.match.NextGameDecision;
 import forge.gamemodes.net.NetworkGuiGame;
 import forge.gui.FThreads;
 import forge.gui.web.dto.GameViewDto;
@@ -34,6 +35,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Server-side {@link forge.gui.interfaces.IGuiGame} that renders to a browser over WebSocket + JSON.
@@ -66,6 +68,10 @@ public final class WebGuiGame extends NetworkGuiGame {
      * (an immutable DTO) rather than reading the live GameView off-thread, which would race the
      * engine mutating its trackable collections. */
     private volatile GameViewDto lastGameView;
+
+    /** Ensures we send the match-ending QUIT decision exactly once (concede and game-end can both
+     * fire); the QUIT triggers the host's onMatchOver, which returns the browser to the lobby. */
+    private final AtomicBoolean quitting = new AtomicBoolean(false);
 
     public WebGuiGame(final WebSession session) {
         this.session = session;
@@ -116,7 +122,7 @@ public final class WebGuiGame extends NetworkGuiGame {
                 case "selectButtonCancel": controller.selectButtonCancel(); break;
                 case "passPriority": controller.passPriority(); break;
                 case "passPriorityUntilEndOfTurn": controller.passPriorityUntilEndOfTurn(); break;
-                case "concede": controller.concede(); break;
+                case "concede": controller.concede(); quitMatch(); break;
                 case "undoLastAction": controller.undoLastAction(); break;
                 case "alphaStrike": controller.alphaStrike(); break;
                 case "selectCard": {
@@ -138,6 +144,19 @@ public final class WebGuiGame extends NetworkGuiGame {
             }
         } catch (final Exception e) {
             System.out.println("[web] action '" + type + "' failed: " + e.getMessage());
+        }
+    }
+
+    /** End the match (sends the QUIT next-game decision once), which fires the host's onMatchOver and
+     * returns the browser to the lobby. Called on concede and when a game finishes. */
+    private void quitMatch() {
+        if (!quitting.compareAndSet(false, true)) {
+            return;
+        }
+        final PlayerView seat = localPlayer;
+        final IGameController controller = seat != null ? getGameController(seat) : getGameController();
+        if (controller != null) {
+            controller.nextGameDecision(NextGameDecision.QUIT);
         }
     }
 
@@ -320,6 +339,7 @@ public final class WebGuiGame extends NetworkGuiGame {
     @Override
     public void finishGame() {
         send("finishGame", null);
+        quitMatch(); // end the match and return the browser to the lobby
     }
 
     // Selectable-card affordances: tell the browser which cards the engine will accept a click on,

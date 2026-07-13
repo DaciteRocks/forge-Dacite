@@ -29,6 +29,7 @@ public class WebGameBootstrapTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private boolean engineReady;
     private HostedMatch match;
+    private WebGuiBase guiBase;
 
     /** Card data lives under one of these (depending on where the suite is launched from). */
     private static boolean cardDataPresent() {
@@ -48,7 +49,8 @@ public class WebGameBootstrapTest {
             engineReady = false;
             return;
         }
-        GuiBase.setInterface(new WebGuiBase());
+        guiBase = new WebGuiBase();
+        GuiBase.setInterface(guiBase);
         FModel.initialize(null, preferences -> {
             preferences.setPref(FPref.LOAD_CARD_SCRIPTS_LAZILY, false);
             preferences.setPref(FPref.UI_LANGUAGE, "en-US");
@@ -65,7 +67,7 @@ public class WebGameBootstrapTest {
         }
     }
 
-    @Test(timeOut = 120_000)
+    @Test(timeOut = 120_000, priority = 1)
     public void bootCommanderEmitsInitialGameView() throws Exception {
         if (!engineReady) {
             throw new SkipException("Forge card data (res/cardsfolder) not available in this environment");
@@ -148,6 +150,58 @@ public class WebGameBootstrapTest {
         gui.resync();
         Assert.assertTrue(countType(recorded, "setGameView") > viewsBefore, "resync should re-send the cached game view");
         Assert.assertTrue(countType(recorded, "openView") >= 1, "resync should re-send the seat (openView)");
+
+        // Don't leave this game running while the next test boots its own.
+        match.endCurrentGame();
+        match = null;
+    }
+
+    @Test(timeOut = 120_000, priority = 2)
+    public void concedeReturnsToTheLobby() throws Exception {
+        if (!engineReady) {
+            throw new SkipException("Forge card data (res/cardsfolder) not available in this environment");
+        }
+        if (match != null) {
+            match.endCurrentGame(); // defensive: ensure no other game is running
+            match = null;
+        }
+
+        final List<String> recorded = new CopyOnWriteArrayList<>();
+        final WebSession session = new WebSession(recorded::add);
+        final WebLobby lobby = new WebLobby(guiBase);
+
+        // Connect -> the lobby presents the setup screen (not an auto-started game).
+        lobby.onConnect(session);
+        Assert.assertTrue(countType(recorded, "setup") >= 1, "connecting should present the lobby setup");
+        Assert.assertNull(latestSetGameView(recorded), "no game should start until the player chooses");
+
+        // Start a game from the lobby (1 AI, random decks) and wait for the dealt board.
+        session.onClientMessage("{\"type\":\"startGame\",\"payload\":{\"aiCount\":1,\"human\":\"random\",\"ai\":[\"random\"]}}");
+        JsonNode dealt = null;
+        final long boardDeadline = System.currentTimeMillis() + 60_000;
+        while (System.currentTimeMillis() < boardDeadline) {
+            final JsonNode gv = latestSetGameView(recorded);
+            if (gv != null && allPlayersHaveLibrary(gv)) {
+                dealt = gv;
+                break;
+            }
+            Thread.sleep(100);
+        }
+        Assert.assertNotNull(dealt, "startGame from the lobby should boot a real game");
+
+        // Concede -> the match ends and the lobby is re-presented (a fresh setup message).
+        final long setupsBeforeConcede = countType(recorded, "setup");
+        session.onClientMessage("{\"type\":\"concede\"}");
+        boolean backToLobby = false;
+        final long lobbyDeadline = System.currentTimeMillis() + 60_000;
+        while (System.currentTimeMillis() < lobbyDeadline) {
+            if (countType(recorded, "setup") > setupsBeforeConcede) {
+                backToLobby = true;
+                break;
+            }
+            Thread.sleep(100);
+        }
+        Assert.assertTrue(backToLobby, "conceding should return the browser to the lobby (a fresh setup message)");
     }
 
     private static long countType(final List<String> recorded, final String type) {

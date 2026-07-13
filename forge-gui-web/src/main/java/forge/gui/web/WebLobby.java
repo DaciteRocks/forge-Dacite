@@ -56,6 +56,19 @@ final class WebLobby {
         }
     }
 
+    /** Match-over callback (concede, or a game/match that ended): tear the game state down and put
+     * the browser back on the setup screen. The engine has already ended the game by this point. */
+    void returnToLobby() {
+        synchronized (lock) {
+            started = false;
+            activeGui = null;
+            final WebSession s = session;
+            if (s != null) {
+                attachLobby(s); // re-take the action handler from the dead game and re-present setup
+            }
+        }
+    }
+
     private void bind(final WebSession newSession) {
         session = newSession;
         guiBase.setActiveSession(newSession);
@@ -108,7 +121,7 @@ final class WebLobby {
         // Launch outside the lock (startMatch spawns the game thread). If it throws we do NOT reset
         // started — a partial match may exist and a second start would double-run the engine.
         try {
-            WebGameHost.startMatch(players, gui);
+            WebGameHost.startMatch(players, gui, this::returnToLobby);
         } catch (final Exception e) {
             System.out.println("[web] startMatch failed: " + e.getMessage());
             if (s != null) {
