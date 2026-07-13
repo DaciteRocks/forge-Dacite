@@ -78,18 +78,8 @@ public final class WebGameHost {
 
     /** Start the match for a pre-built, validated player list; the first seat is the human. */
     public static HostedMatch startMatch(final List<RegisteredPlayer> players, final IGuiGame humanGui) {
-        return startMatch(players, humanGui, null);
-    }
-
-    /** As above, but register a callback fired when the match ends (e.g. to return to the lobby).
-     * Set BEFORE the match starts so an immediate concede can't miss it. */
-    public static HostedMatch startMatch(final List<RegisteredPlayer> players, final IGuiGame humanGui,
-                                         final Runnable onMatchOver) {
         final Set<GameType> variants = EnumSet.noneOf(GameType.class);
         final HostedMatch match = new HostedMatch();
-        if (onMatchOver != null) {
-            match.setOnMatchOver(onMatchOver);
-        }
         match.startMatch(GameType.Commander, variants, players, players.get(0), humanGui);
         return match;
     }

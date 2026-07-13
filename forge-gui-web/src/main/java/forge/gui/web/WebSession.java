@@ -134,13 +134,19 @@ public final class WebSession {
         }
     }
 
+    /** Fail all outstanding questions (complete with null) so a game thread parked in
+     * {@link #sendAndWait} unblocks — e.g. when abandoning a game to return to the lobby. */
+    public void failPending() {
+        pending.values().forEach(f -> f.complete(null));
+        pending.clear();
+        pendingMessages.clear();
+    }
+
     /** Terminal shutdown: fail all outstanding questions so the game thread can't hang forever.
      * Used when the game is ending — a transient disconnect uses {@link #detach} instead, which
      * keeps the questions alive for a reconnect. */
     public void onClose() {
-        pending.values().forEach(f -> f.complete(null));
-        pending.clear();
-        pendingMessages.clear();
+        failPending();
     }
 
     private void writeJson(final Message msg) {

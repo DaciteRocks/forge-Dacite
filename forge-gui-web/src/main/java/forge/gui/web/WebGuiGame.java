@@ -69,9 +69,18 @@ public final class WebGuiGame extends NetworkGuiGame {
      * engine mutating its trackable collections. */
     private volatile GameViewDto lastGameView;
 
-    /** Ensures we send the match-ending QUIT decision exactly once (concede and game-end can both
-     * fire); the QUIT triggers the host's onMatchOver, which returns the browser to the lobby. */
-    private final AtomicBoolean quitting = new AtomicBoolean(false);
+    /** Set once we've left this game (concede or leaving after game-end). Ensures the leave path runs
+     * exactly once, and silences all further outbound messages so the engine's deferred game-over
+     * callbacks can't repaint a dead board over the lobby the browser was just returned to. */
+    private final AtomicBoolean leaving = new AtomicBoolean(false);
+    private volatile boolean silenced;
+
+    /** Return-to-lobby callback (set by the lobby that owns this game). */
+    private volatile Runnable onLeaveGame;
+
+    public void setOnLeaveGame(final Runnable r) {
+        this.onLeaveGame = r;
+    }
 
     public WebGuiGame(final WebSession session) {
         this.session = session;
@@ -80,9 +89,10 @@ public final class WebGuiGame extends NetworkGuiGame {
         }
     }
 
-    /** Null-safe notification send — the session may be null (e.g. a GUI created before connect). */
+    /** Null-safe notification send — the session may be null (e.g. a GUI created before connect).
+     * Silenced once we leave the game, so late engine callbacks can't repaint over the lobby. */
     private void send(final String type, final Object payload) {
-        if (session != null) {
+        if (session != null && !silenced) {
             session.send(type, payload);
         }
     }
@@ -108,6 +118,10 @@ public final class WebGuiGame extends NetworkGuiGame {
             resync(); // pure state refresh; needs no controller
             return;
         }
+        if ("leaveMatch".equals(type)) {
+            leaveToLobby(false); // leaving an already-finished game; tear down now (thread settled)
+            return;
+        }
         // Route to the controller for the player this browser owns (captured in openView), rather
         // than the engine's mutable currentPlayer, so a click can't be misrouted or dropped during
         // a transient current-player change. Falls back to currentPlayer if openView hasn't run yet.
@@ -122,7 +136,7 @@ public final class WebGuiGame extends NetworkGuiGame {
                 case "selectButtonCancel": controller.selectButtonCancel(); break;
                 case "passPriority": controller.passPriority(); break;
                 case "passPriorityUntilEndOfTurn": controller.passPriorityUntilEndOfTurn(); break;
-                case "concede": controller.concede(); quitMatch(); break;
+                case "concede": controller.concede(); leaveToLobby(true); break;
                 case "undoLastAction": controller.undoLastAction(); break;
                 case "alphaStrike": controller.alphaStrike(); break;
                 case "selectCard": {
@@ -147,12 +161,37 @@ public final class WebGuiGame extends NetworkGuiGame {
         }
     }
 
-    /** End the match (sends the QUIT next-game decision once), which fires the host's onMatchOver and
-     * returns the browser to the lobby. Called on concede and when a game finishes. */
-    private void quitMatch() {
-        if (!quitting.compareAndSet(false, true)) {
+    /**
+     * Leave this game and return the browser to the lobby. Runs once. Immediately: silence further
+     * board output, unblock any parked question, and swap the browser to the lobby. The engine
+     * match-teardown (QUIT) is optionally deferred so it doesn't run {@code endCurrentGame} while the
+     * game thread is still unwinding the just-ended game (a concurrent-modification race).
+     *
+     * @param deferTeardown true for a programmatic leave right at game-over (concede) — defer the
+     *                      QUIT so the game thread settles first; false when the human clicks away
+     *                      from an already-finished game (the game thread has long settled).
+     */
+    private void leaveToLobby(final boolean deferTeardown) {
+        if (!leaving.compareAndSet(false, true)) {
             return;
         }
+        silenced = true;
+        if (session != null) {
+            session.failPending(); // unblock a game thread parked in a question
+        }
+        final Runnable leave = onLeaveGame;
+        if (leave != null) {
+            leave.run(); // return the browser to the lobby now
+        }
+        if (deferTeardown) {
+            FThreads.delayInEDT(750, this::sendQuit);
+        } else {
+            sendQuit();
+        }
+    }
+
+    /** Tell the engine to end the match (QUIT). Safe to call when the controller is already gone. */
+    private void sendQuit() {
         final PlayerView seat = localPlayer;
         final IGameController controller = seat != null ? getGameController(seat) : getGameController();
         if (controller != null) {
@@ -338,8 +377,13 @@ public final class WebGuiGame extends NetworkGuiGame {
 
     @Override
     public void finishGame() {
-        send("finishGame", null);
-        quitMatch(); // end the match and return the browser to the lobby
+        // Natural game end (not a concede — that path has already silenced us). Show the outcome and
+        // let the player leave via a "Back to Menu" button (leaveMatch), rather than auto-quitting
+        // (which would wipe the result and, in a best-of-N match, skip the remaining games).
+        final GameView gv = getGameView();
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("winner", gv != null ? gv.getWinningPlayerName() : null);
+        send("gameOver", payload);
     }
 
     // Selectable-card affordances: tell the browser which cards the engine will accept a click on,

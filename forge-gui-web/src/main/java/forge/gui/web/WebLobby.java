@@ -56,15 +56,18 @@ final class WebLobby {
         }
     }
 
-    /** Match-over callback (concede, or a game/match that ended): tear the game state down and put
-     * the browser back on the setup screen. The engine has already ended the game by this point. */
+    /** Leave-game callback (concede, or leaving after a game ended): put the browser back on the
+     * setup screen. Idempotent — a second call (e.g. from a later game-end event) is a no-op. */
     void returnToLobby() {
         synchronized (lock) {
+            if (!started) {
+                return; // already back in the lobby
+            }
             started = false;
             activeGui = null;
             final WebSession s = session;
             if (s != null) {
-                attachLobby(s); // re-take the action handler from the dead game and re-present setup
+                attachLobby(s); // re-take the action handler from the finished game and re-present setup
             }
         }
     }
@@ -115,13 +118,14 @@ final class WebLobby {
             }
             started = true;
             gui = new WebGuiGame(s); // installs its own action handler for in-game input
+            gui.setOnLeaveGame(this::returnToLobby); // concede / game-end returns here
             activeGui = gui;
         }
 
         // Launch outside the lock (startMatch spawns the game thread). If it throws we do NOT reset
         // started — a partial match may exist and a second start would double-run the engine.
         try {
-            WebGameHost.startMatch(players, gui, this::returnToLobby);
+            WebGameHost.startMatch(players, gui);
         } catch (final Exception e) {
             System.out.println("[web] startMatch failed: " + e.getMessage());
             if (s != null) {

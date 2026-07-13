@@ -88,7 +88,7 @@
         payload ? ("Assign " + payload.damage + " damage" + (payload.attackerName ? " from " + payload.attackerName : "")) : "Assign damage"); break;
       case "assignAmount": showDistribute(id, payload && payload.amount, payload && payload.options,
         (payload && payload.atLeastOne) ? 1 : 0, (payload && payload.label) || "Distribute amount"); break;
-      case "finishGame": promptEl.textContent = "Game over."; break;
+      case "gameOver": showGameOver(payload); break;
       default:
         console.log("unhandled message:", type, payload, "id=", id);
     }
@@ -604,6 +604,8 @@
   function renderSetup(payload) {
     // Returning to the lobby (e.g. after a concede): clear any leftover in-game UI behind the setup.
     closeModal();
+    var overlays = document.getElementsByClassName("detail-overlay");
+    while (overlays.length) { overlays[0].parentNode.removeChild(overlays[0]); }
     buttonsEl.innerHTML = "";
     promptEl.textContent = "";
     var decks = (payload && payload.decks) || [{ id: "random", label: "🎲 Random" }];
@@ -664,6 +666,22 @@
   }
 
   function hideSetup() { setupEl.classList.remove("show"); setupEl.innerHTML = ""; }
+
+  // Natural game end: show the outcome with a Back-to-Menu button (leaveMatch -> lobby). Uses its
+  // own overlay so it doesn't clash with the game-question modal.
+  function showGameOver(payload) {
+    var winner = payload && payload.winner;
+    var mine = winner && mySeatIds.length && lastGame &&
+      (lastGame.players || []).some(function (p) { return mySeatIds.indexOf(p.id) >= 0 && p.name === winner; });
+    var overlay = el("div", "detail-overlay");
+    var d = el("div", "dialog");
+    d.appendChild(el("h3", "", winner ? (mine ? "You win!" : winner + " wins") : "Game over"));
+    var btn = el("button", "opt start", "Back to Menu");
+    btn.onclick = function () { if (overlay.parentNode) { overlay.parentNode.removeChild(overlay); } sendAction("leaveMatch"); };
+    d.appendChild(btn);
+    overlay.appendChild(d);
+    document.body.appendChild(overlay);
+  }
 
   function deckSelect(decks) {
     var s = document.createElement("select");
