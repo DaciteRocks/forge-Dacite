@@ -60,10 +60,20 @@
       case "message": if (payload && payload.message) { promptEl.textContent = payload.message; } break;
       case "selectables": setSelectables(payload); break;
       case "getAbilityToPlay": showAbilityDialog(payload, id); break;
+      case "confirm": showConfirm(payload, id); break;
+      case "confirmDialog": showConfirmDialog(payload, id); break;
+      case "optionDialog": showOptionDialog(payload, id); break;
+      case "inputDialog": showInputDialog(payload, id); break;
+      case "getChoices": showMultiSelect(payload, id); break;
+      case "chooseEntity": showChooseEntity(payload, id); break;
+      case "chooseEntities": showMultiSelect(payload, id); break;
+      case "order": showOrder(payload, id); break;
+      case "assignDamage": showDistribute(payload, id, payload && payload.damage, payload && payload.blockers,
+        payload ? ("Assign " + payload.damage + " damage" + (payload.attackerName ? " from " + payload.attackerName : "")) : "Assign damage"); break;
+      case "assignAmount": showDistribute(payload, id, payload && payload.amount, payload && payload.options,
+        (payload && payload.label) || "Distribute amount"); break;
       case "finishGame": promptEl.textContent = "Game over."; break;
       default:
-        // Phase 3 question types (getChoices, confirm, order, assignCombatDamage, …) will render
-        // modals and reply with { replyTo: id, value: ... }. For now, just log.
         console.log("unhandled message:", type, payload, "id=", id);
     }
   }
@@ -301,27 +311,218 @@
   }
 
   // ── Dialogs (reply to a blocking game-thread question) ───────────────────────
-  // The reply unblocks the game thread, so every dialog MUST be answerable. A Cancel always
-  // replies too (here with index -1, which getAbilityToPlay reads as "no ability" -> null),
-  // so a misclick can never trap the user waiting on the question.
+  // The reply unblocks the game thread, so EVERY dialog must be answerable to completion — each
+  // path below eventually calls reply(id, ...). A Cancel replies too (typically index -1, which
+  // the server reads as "no choice" and resolves to its safe default), so a misclick can't trap
+  // the user waiting on the question.
+
   function showAbilityDialog(payload, id) {
     var opts = (payload && payload.abilities) || [];
-    openModal((payload && payload.hostName) || "Choose an ability", opts.map(function (o) {
+    openSingle((payload && payload.hostName) || "Choose an ability", opts.map(function (o) {
       return { label: o.description || ("Option " + o.index), value: { index: o.index } };
     }), function (value) { reply(id, value); }, function () { reply(id, { index: -1 }); });
   }
 
-  function openModal(title, options, onPick, onCancel) {
+  function showConfirm(payload, id) {
+    var q = (payload && payload.question) || "Confirm";
+    var opts = payload && payload.options;
+    if (opts && opts.length) {
+      // Custom labels: the engine's confirm() returns true iff the FIRST option was chosen.
+      modalButtons(q, opts.map(function (label, i) {
+        return { label: label, onClick: function () { reply(id, { value: i === 0 }); } };
+      }));
+    } else {
+      modalButtons(q, [
+        { label: "Yes", onClick: function () { reply(id, { value: true }); } },
+        { label: "No", onClick: function () { reply(id, { value: false }); } }
+      ]);
+    }
+  }
+
+  function showConfirmDialog(payload, id) {
+    var p = payload || {};
+    modalButtons(p.title || p.message || "Confirm", [
+      { label: p.yesText || "Yes", onClick: function () { reply(id, { value: true }); } },
+      { label: p.noText || "No", onClick: function () { reply(id, { value: false }); } }
+    ], p.title ? p.message : null);
+  }
+
+  function showOptionDialog(payload, id) {
+    var p = payload || {};
+    var buttons = (p.options || []).map(function (o) {
+      return { label: o.label, onClick: function () { reply(id, { index: o.index }); } };
+    });
+    buttons.push({ label: "Cancel", onClick: function () { reply(id, {}); } });
+    modalButtons(p.title || p.message || "Choose", buttons, p.title ? p.message : null);
+  }
+
+  function showInputDialog(payload, id) {
+    var p = payload || {};
+    if (p.options && p.options.length) {
+      var buttons = p.options.map(function (o) {
+        return { label: o, onClick: function () { reply(id, { value: o }); } };
+      });
+      buttons.push({ label: "Cancel", onClick: function () { reply(id, { value: null }); } });
+      modalButtons(p.title || p.message || "Input", buttons, p.title ? p.message : null);
+      return;
+    }
+    var dialog = el("div", "dialog");
+    dialog.appendChild(el("h3", "", p.title || "Input"));
+    if (p.message) { dialog.appendChild(el("div", "", p.message)); }
+    var input = document.createElement("input");
+    input.type = p.isNumeric ? "number" : "text";
+    input.value = p.initial != null ? p.initial : "";
+    dialog.appendChild(input);
+    dialog.appendChild(optButton("OK", function () { reply(id, { value: input.value }); }));
+    dialog.appendChild(optButton("Cancel", function () { reply(id, { value: null }); }));
+    showDialog(dialog);
+    setTimeout(function () { input.focus(); }, 0);
+  }
+
+  // Single choice (chooseSingleEntityForEffect). Cancel replies index -1: optional -> null on the
+  // server, mandatory -> the server falls back to the first option, so this is always safe.
+  function showChooseEntity(payload, id) {
+    var p = payload || {};
+    openSingle(p.title || "Choose", (p.options || []).map(function (o) {
+      return { label: o.label, value: { index: o.index } };
+    }), function (value) { reply(id, value); }, function () { reply(id, { index: -1 }); });
+  }
+
+  // Multi-select for getChoices / chooseEntitiesForEffect (min..max).
+  function showMultiSelect(payload, id) {
+    var p = payload || {};
+    var options = p.options || [];
+    var min = p.min || 0;
+    var max = p.max != null ? p.max : options.length;
+    var selected = {};
+    (p.selected || []).forEach(function (i) { selected[i] = true; });
+
+    var dialog = el("div", "dialog");
+    dialog.appendChild(el("h3", "", p.message || p.title || "Choose " + min + "–" + max));
+    var confirm = optButton("Confirm", function () {
+      reply(id, { indices: Object.keys(selected).map(Number) });
+    });
+    function label(o) { return (selected[o.index] ? "☑ " : "☐ ") + o.label; }
+    function refresh() {
+      options.forEach(function (o) { o._btn.textContent = label(o); });
+      var n = Object.keys(selected).length;
+      confirm.disabled = !(n >= min && n <= max);
+    }
+    options.forEach(function (o) {
+      var b = plainButton("", function () {
+        if (selected[o.index]) { delete selected[o.index]; }
+        else {
+          if (Object.keys(selected).length >= max) {
+            if (max === 1) { selected = {}; } else { return; }
+          }
+          selected[o.index] = true;
+        }
+        refresh();
+      });
+      o._btn = b;
+      dialog.appendChild(b);
+    });
+    dialog.appendChild(confirm);
+    refresh();
+    showDialog(dialog);
+  }
+
+  // Tap items in the desired order (order()); Confirm enables once all are placed.
+  function showOrder(payload, id) {
+    var p = payload || {};
+    var options = p.options || [];
+    var order = [];
+    var dialog = el("div", "dialog");
+    dialog.appendChild(el("h3", "", p.title || "Order"));
+    if (p.top) { dialog.appendChild(el("div", "", "Top: " + p.top)); }
+    var confirm = optButton("Confirm order", function () { reply(id, { indices: order }); });
+    confirm.disabled = true;
+    options.forEach(function (o) {
+      var b = plainButton(o.label, function () {
+        if (order.indexOf(o.index) >= 0) { return; }
+        order.push(o.index);
+        b.textContent = order.length + ". " + o.label;
+        b.disabled = true;
+        confirm.disabled = order.length !== options.length;
+      });
+      o._ob = b;
+      dialog.appendChild(b);
+    });
+    dialog.appendChild(confirm);
+    dialog.appendChild(plainButton("Reset", function () {
+      order = [];
+      options.forEach(function (o) { o._ob.textContent = o.label; o._ob.disabled = false; });
+      confirm.disabled = true;
+    }));
+    showDialog(dialog);
+  }
+
+  // Distribute a fixed total across items (assignCombatDamage / assignGenericAmount).
+  function showDistribute(payload, id, total, items, title) {
+    items = items || [];
+    var dialog = el("div", "dialog");
+    dialog.appendChild(el("h3", "", title));
+    var tally = el("div", "", "");
+    dialog.appendChild(tally);
+    var inputs = [];
+    function sum() { return inputs.reduce(function (a, i) { return a + (parseInt(i.value, 10) || 0); }, 0); }
+    var confirm = optButton("Confirm", function () {
+      reply(id, { amounts: inputs.map(function (i) { return parseInt(i.value, 10) || 0; }) });
+    });
+    function refresh() {
+      var s = sum();
+      tally.textContent = "Assigned " + s + " / " + total;
+      confirm.disabled = s !== total;
+    }
+    items.forEach(function (it) {
+      var row = el("div", "");
+      row.appendChild(el("span", "", it.label + (it.lethal != null ? " (lethal " + it.lethal + ")" : "") + ": "));
+      var input = document.createElement("input");
+      input.type = "number"; input.min = "0"; input.value = "0";
+      input.oninput = refresh;
+      inputs.push(input);
+      row.appendChild(input);
+      dialog.appendChild(row);
+    });
+    dialog.appendChild(confirm);
+    refresh();
+    showDialog(dialog);
+  }
+
+  // ── Modal primitives ─────────────────────────────────────────────────────────
+  function openSingle(title, options, onPick, onCancel) {
     var dialog = el("div", "dialog");
     dialog.appendChild(el("h3", "", title));
     options.forEach(function (opt) {
-      var b = el("button", "opt", opt.label);
-      b.onclick = function () { closeModal(); onPick(opt.value); };
-      dialog.appendChild(b);
+      dialog.appendChild(optButton(opt.label, function () { onPick(opt.value); }));
     });
-    var cancel = el("button", "opt", "Cancel");
-    cancel.onclick = function () { closeModal(); if (onCancel) { onCancel(); } };
-    dialog.appendChild(cancel);
+    dialog.appendChild(optButton("Cancel", function () { if (onCancel) { onCancel(); } }));
+    showDialog(dialog);
+  }
+
+  function modalButtons(title, buttons, subtitle) {
+    var dialog = el("div", "dialog");
+    dialog.appendChild(el("h3", "", title));
+    if (subtitle) { dialog.appendChild(el("div", "", subtitle)); }
+    buttons.forEach(function (b) { dialog.appendChild(optButton(b.label, b.onClick)); });
+    showDialog(dialog);
+  }
+
+  // A terminal modal button: closes the modal, then runs its (reply-sending) handler.
+  function optButton(label, onClick) {
+    var b = el("button", "opt", label);
+    b.onclick = function () { closeModal(); onClick(); };
+    return b;
+  }
+
+  // A non-terminal modal button (toggle / order / reset): runs its handler without closing.
+  function plainButton(label, onClick) {
+    var b = el("button", "opt", label);
+    b.onclick = onClick;
+    return b;
+  }
+
+  function showDialog(dialog) {
     modalEl.innerHTML = "";
     modalEl.appendChild(dialog);
     modalEl.classList.add("show");

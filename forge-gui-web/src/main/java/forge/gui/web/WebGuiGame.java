@@ -349,9 +349,10 @@ public final class WebGuiGame extends NetworkGuiGame {
         return null;
     }
 
-    // ── Interactive questions — Phase 0 stubs (Phase 2/3 make these sendAndWait) ──
-    // Returning safe defaults so game setup and passing priority work. Actively
-    // answering these (targeting, ordering, combat damage, choices) is Phase 2/3.
+    // ── Interactive questions — real sendAndWait round-trips ─────────────────────
+    // Each blocking question serializes its options, asks the browser, and maps the reply back to
+    // the engine's objects by index. On timeout/disconnect/cancel (ask() -> null) we fall back to a
+    // safe default (skip if optional, first `min` if mandatory) so the game thread never wedges.
 
     @Override
     public SpellAbilityView getAbilityToPlay(final CardView hostCard, final List<SpellAbilityView> abilities,
@@ -390,37 +391,112 @@ public final class WebGuiGame extends NetworkGuiGame {
     public Map<CardView, Integer> assignCombatDamage(final CardView attacker, final List<CardView> blockers,
                                                      final int damage, final GameEntityView defender,
                                                      final boolean overrideOrder, final boolean maySkip) {
-        return null;
+        if (blockers == null || blockers.isEmpty()) {
+            return null; // nothing to split among; the engine assigns to the defender directly
+        }
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("attackerId", attacker != null ? attacker.getId() : null);
+        payload.put("attackerName", attacker != null ? attacker.getName() : null);
+        payload.put("damage", damage);
+        payload.put("maySkip", maySkip);
+        final List<Map<String, Object>> bl = new ArrayList<>();
+        for (int i = 0; i < blockers.size(); i++) {
+            final CardView b = blockers.get(i);
+            final Map<String, Object> o = new HashMap<>();
+            o.put("index", i);
+            o.put("id", b.getId());
+            o.put("label", b.getName());
+            o.put("lethal", lethalDamage(b));
+            bl.add(o);
+        }
+        payload.put("blockers", bl);
+
+        final JsonNode reply = ask("assignDamage", payload);
+        final List<Integer> amounts = WebDialogs.validateDistribution(
+                WebDialogs.intArray(reply, "amounts"), blockers.size(), damage);
+        if (amounts == null) {
+            return null; // invalid/absent -> let the engine auto-assign lethal-in-order
+        }
+        final Map<CardView, Integer> result = new HashMap<>();
+        for (int i = 0; i < blockers.size(); i++) {
+            result.put(blockers.get(i), amounts.get(i));
+        }
+        return result;
+    }
+
+    private static int lethalDamage(final CardView c) {
+        final CardView.CardStateView s = c.getCurrentState();
+        return s != null ? Math.max(0, s.getToughness() - c.getDamage()) : 1;
     }
 
     @Override
     public Map<Object, Integer> assignGenericAmount(final CardView effectSource, final Map<Object, Integer> target,
                                                     final int amount, final boolean atLeastOne, final String amountLabel) {
-        return null;
+        if (target == null || target.isEmpty()) {
+            return null;
+        }
+        final List<Object> keys = new ArrayList<>(target.keySet());
+        final List<String> labels = new ArrayList<>();
+        for (final Object key : keys) {
+            labels.add(keyLabel(key));
+        }
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("amount", amount);
+        payload.put("atLeastOne", atLeastOne);
+        payload.put("label", amountLabel);
+        payload.put("options", WebDialogs.options(labels));
+
+        final JsonNode reply = ask("assignAmount", payload);
+        final List<Integer> amounts = WebDialogs.validateDistribution(
+                WebDialogs.intArray(reply, "amounts"), keys.size(), amount);
+        if (amounts == null) {
+            return null;
+        }
+        final Map<Object, Integer> result = new HashMap<>();
+        for (int i = 0; i < keys.size(); i++) {
+            result.put(keys.get(i), amounts.get(i));
+        }
+        return result;
+    }
+
+    private static String keyLabel(final Object key) {
+        return key instanceof GameEntityView ? ((GameEntityView) key).getName() : String.valueOf(key);
     }
 
     @Override
     public GameEntityView chooseSingleEntityForEffect(final String title, final List<? extends GameEntityView> optionList,
                                                       final DelayedReveal delayedReveal, final boolean isOptional) {
-        // Mandatory choice auto-picks the first option; optional returns null (skip).
-        if (!isOptional && optionList != null && !optionList.isEmpty()) {
-            return optionList.get(0);
+        if (optionList == null || optionList.isEmpty()) {
+            return null;
         }
-        return null;
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("title", title);
+        payload.put("optional", isOptional);
+        payload.put("options", WebDialogs.options(entityLabels(optionList)));
+
+        final int idx = WebDialogs.replyIndex(ask("chooseEntity", payload));
+        if (idx >= 0 && idx < optionList.size()) {
+            return optionList.get(idx);
+        }
+        return isOptional ? null : optionList.get(0); // mandatory: fall back to the first option
     }
 
     @Override
     public List<GameEntityView> chooseEntitiesForEffect(final String title, final List<? extends GameEntityView> optionList,
                                                         final int min, final int max, final DelayedReveal delayedReveal) {
-        // Auto-pick the required minimum so mandatory (min>=1) effects don't silently under-select.
         final List<GameEntityView> result = new ArrayList<>();
-        if (optionList != null) {
-            for (final GameEntityView entity : optionList) {
-                if (result.size() >= min) {
-                    break;
-                }
-                result.add(entity);
-            }
+        if (optionList == null || optionList.isEmpty()) {
+            return result;
+        }
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("title", title);
+        payload.put("min", min);
+        payload.put("max", max);
+        payload.put("options", WebDialogs.options(entityLabels(optionList)));
+
+        final JsonNode reply = ask("chooseEntities", payload);
+        for (final int i : WebDialogs.sanitizeSelection(WebDialogs.replyIndices(reply), min, optionList.size())) {
+            result.add(optionList.get(i));
         }
         return result;
     }
@@ -429,24 +505,29 @@ public final class WebGuiGame extends NetworkGuiGame {
     public List<CardView> manipulateCardList(final String title, final Iterable<CardView> cards,
                                              final Iterable<CardView> manipulable, final boolean toTop,
                                              final boolean toBottom, final boolean toAnywhere) {
-        return null;
+        return null; // free-form library manipulation UI is deferred (Phase 4 polish)
     }
 
     @Override
     public int showOptionDialog(final String message, final String title, final FSkinProp icon,
                                 final List<String> options, final int defaultOption) {
-        return defaultOption;
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("message", message);
+        payload.put("title", title);
+        payload.put("options", WebDialogs.options(options));
+        final int idx = WebDialogs.replyIndex(ask("optionDialog", payload));
+        return idx >= 0 ? idx : defaultOption;
     }
 
     @Override
     public List<PaperCard> sideboard(final CardPool sideboard, final CardPool main, final String message) {
-        return null;
+        return null; // no sideboarding in single-game Commander vs AI
     }
 
     @Override
     public PlayerZoneUpdates openZones(final PlayerView controller, final Collection<ZoneType> zones,
                                        final Map<PlayerView, Object> players, final boolean backupLastZones) {
-        return null;
+        return null; // zone-peek viewer is deferred (Phase 4 polish); effects still resolve
     }
 
     @Override
@@ -458,13 +539,25 @@ public final class WebGuiGame extends NetworkGuiGame {
     @Override
     public boolean confirm(final CardView c, final String question, final boolean defaultIsYes,
                            final List<String> options) {
-        return defaultIsYes;
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("question", question);
+        payload.put("cardId", c != null ? c.getId() : null);
+        payload.put("cardName", c != null ? c.getName() : null);
+        payload.put("options", options); // null -> browser shows Yes/No
+        payload.put("defaultYes", defaultIsYes);
+        return WebDialogs.replyBool(ask("confirm", payload), defaultIsYes);
     }
 
     @Override
     public boolean showConfirmDialog(final String message, final String title, final String yesButtonText,
                                      final String noButtonText, final boolean defaultYes) {
-        return defaultYes;
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("message", message);
+        payload.put("title", title);
+        payload.put("yesText", yesButtonText);
+        payload.put("noText", noButtonText);
+        payload.put("defaultYes", defaultYes);
+        return WebDialogs.replyBool(ask("confirmDialog", payload), defaultYes);
     }
 
     @Override
@@ -478,22 +571,48 @@ public final class WebGuiGame extends NetworkGuiGame {
     @Override
     public String showInputDialog(final String message, final String title, final FSkinProp icon,
                                   final String initialInput, final List<String> inputOptions, final boolean isNumeric) {
-        return initialInput;
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("message", message);
+        payload.put("title", title);
+        payload.put("initial", initialInput);
+        payload.put("isNumeric", isNumeric);
+        payload.put("options", inputOptions);
+        final JsonNode reply = ask("inputDialog", payload);
+        if (reply == null) {
+            return initialInput; // timeout -> the engine's initial value
+        }
+        final JsonNode value = reply.get("value");
+        return value != null && !value.isNull() ? value.asText() : null; // explicit cancel -> null
     }
 
     @Override
     public <T> List<T> getChoices(final String message, final int min, final int max, final List<T> choices,
                                   final List<T> selected, final FSerializableFunction<T, String> display) {
-        // The engine does NOT null-guard getChoices — returning null would NPE the game thread
-        // (e.g. opening-hand abilities via many()). Auto-pick the required minimum; Phase 2 prompts.
         final List<T> result = new ArrayList<>();
-        if (choices != null) {
-            for (final T choice : choices) {
-                if (result.size() >= min) {
-                    break;
+        if (choices == null || choices.isEmpty()) {
+            return result;
+        }
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("message", message);
+        payload.put("min", min);
+        payload.put("max", max);
+        payload.put("options", WebDialogs.options(genericLabels(choices, display)));
+        final List<Integer> pre = new ArrayList<>();
+        if (selected != null) {
+            for (final T s : selected) {
+                final int i = choices.indexOf(s);
+                if (i >= 0) {
+                    pre.add(i);
                 }
-                result.add(choice);
             }
+        }
+        payload.put("selected", pre);
+
+        final JsonNode reply = ask("getChoices", payload);
+        // The engine does NOT null-guard getChoices, so a mandatory (min>=1) choice must never come
+        // back empty — sanitizeSelection falls back to the first `min` on a short/cancelled reply.
+        for (final int i : WebDialogs.sanitizeSelection(WebDialogs.replyIndices(reply), min, choices.size())) {
+            result.add(choices.get(i));
         }
         return result;
     }
@@ -502,6 +621,53 @@ public final class WebGuiGame extends NetworkGuiGame {
     public <T> List<T> order(final String title, final String top, final int remainingObjectsMin,
                              final int remainingObjectsMax, final List<T> sourceChoices, final List<T> destChoices,
                              final CardView referenceCard, final boolean sideboardingMode) {
+        if (sourceChoices == null || sourceChoices.size() < 2) {
+            return sourceChoices; // nothing to order
+        }
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("title", title);
+        payload.put("top", top);
+        payload.put("options", WebDialogs.options(genericLabels(sourceChoices, null)));
+
+        final List<Integer> orderIdx = WebDialogs.replyIndices(ask("order", payload));
+        // Accept only a full permutation of the source; otherwise keep the engine's original order.
+        if (orderIdx.size() == sourceChoices.size()
+                && new java.util.HashSet<>(orderIdx).size() == sourceChoices.size()) {
+            final List<T> ordered = new ArrayList<>();
+            for (final int i : orderIdx) {
+                if (i < 0 || i >= sourceChoices.size()) {
+                    return sourceChoices;
+                }
+                ordered.add(sourceChoices.get(i));
+            }
+            return ordered;
+        }
         return sourceChoices;
+    }
+
+    private static List<String> entityLabels(final List<? extends GameEntityView> list) {
+        final List<String> labels = new ArrayList<>();
+        if (list != null) {
+            for (final GameEntityView e : list) {
+                labels.add(e != null ? e.getName() : "?");
+            }
+        }
+        return labels;
+    }
+
+    private static <T> List<String> genericLabels(final List<T> choices, final FSerializableFunction<T, String> display) {
+        final List<String> labels = new ArrayList<>();
+        if (choices != null) {
+            for (final T c : choices) {
+                String label;
+                try {
+                    label = display != null ? display.apply(c) : String.valueOf(c);
+                } catch (final Exception e) {
+                    label = String.valueOf(c);
+                }
+                labels.add(label);
+            }
+        }
+        return labels;
     }
 }
