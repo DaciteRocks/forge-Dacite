@@ -54,6 +54,7 @@ public class WebGameBootstrapTest {
         FModel.initialize(null, preferences -> {
             preferences.setPref(FPref.LOAD_CARD_SCRIPTS_LAZILY, false);
             preferences.setPref(FPref.UI_LANGUAGE, "en-US");
+            preferences.setPref(FPref.UI_SELECT_FROM_CARD_DISPLAYS, false); // zone searches via modal
             return null;
         });
         engineReady = true;

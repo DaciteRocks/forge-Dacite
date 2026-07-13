@@ -28,6 +28,11 @@ public final class WebMatchLauncher {
         FModel.initialize(null, preferences -> {
             preferences.setPref(FPref.LOAD_CARD_SCRIPTS_LAZILY, false);
             preferences.setPref(FPref.UI_LANGUAGE, "en-US");
+            // Route zone searches (library/graveyard/exile — e.g. a tutor like Three Visits) through
+            // the chooseSingleEntityForEffect MODAL instead of the board-click input, since the web
+            // UI doesn't render those hidden/compact zones as clickable cards. Battlefield/hand still
+            // use board-click, which the web UI does support.
+            preferences.setPref(FPref.UI_SELECT_FROM_CARD_DISPLAYS, false);
             return null;
         });
         System.out.println("[web] Forge initialized.");
