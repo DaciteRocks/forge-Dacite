@@ -43,23 +43,44 @@ public final class WebGameHost {
         return startCommander(new GameConfig(1, RANDOM_DECK, List.of(RANDOM_DECK)), humanGui);
     }
 
-    /** Build the players from the lobby config and start the match; the first seat is the human. */
+    /** Build the players then start — kept for the test/default path. */
     public static HostedMatch startCommander(final GameConfig config, final IGuiGame humanGui) {
-        final RegisteredPlayer human = RegisteredPlayer.forCommander(resolveDeck(config.humanDeck, false))
-                .setPlayer(GamePlayerUtil.getGuiPlayer());
+        return startMatch(buildPlayers(config), humanGui);
+    }
 
+    /**
+     * Resolve and validate the decks into a player list (index 0 is the human). Throws if the
+     * human's chosen deck is not Commander-legal, so the lobby can surface a clear error and let the
+     * player pick again — BEFORE any match is started (nothing has launched yet at this point).
+     * Illegal AI decks are silently replaced with a generated one rather than failing the game.
+     */
+    public static List<RegisteredPlayer> buildPlayers(final GameConfig config) {
+        final Deck humanDeck = resolveDeck(config.humanDeck, false);
+        final String problem = commanderProblem(humanDeck);
+        if (problem != null) {
+            throw new IllegalArgumentException("Your deck " + problem);
+        }
         final List<RegisteredPlayer> players = new ArrayList<>();
-        players.add(human);
+        players.add(RegisteredPlayer.forCommander(humanDeck).setPlayer(GamePlayerUtil.getGuiPlayer()));
+
         final int aiCount = Math.max(1, Math.min(MAX_AI, config.aiCount));
         for (int i = 0; i < aiCount; i++) {
             final String choice = i < config.aiDecks.size() ? config.aiDecks.get(i) : RANDOM_DECK;
-            players.add(RegisteredPlayer.forCommander(resolveDeck(choice, true))
+            Deck aiDeck = resolveDeck(choice, true);
+            if (commanderProblem(aiDeck) != null) {
+                aiDeck = DeckgenUtil.generateCommanderDeck(true, GameType.Commander); // keep the game startable
+            }
+            players.add(RegisteredPlayer.forCommander(aiDeck)
                     .setPlayer(GamePlayerUtil.createAiPlayer("Opponent " + (i + 1))));
         }
+        return players;
+    }
 
+    /** Start the match for a pre-built, validated player list; the first seat is the human. */
+    public static HostedMatch startMatch(final List<RegisteredPlayer> players, final IGuiGame humanGui) {
         final Set<GameType> variants = EnumSet.noneOf(GameType.class);
         final HostedMatch match = new HostedMatch();
-        match.startMatch(GameType.Commander, variants, players, human, humanGui);
+        match.startMatch(GameType.Commander, variants, players, players.get(0), humanGui);
         return match;
     }
 

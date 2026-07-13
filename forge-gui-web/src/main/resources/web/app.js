@@ -567,7 +567,9 @@
     function cancel() { if (timer) { clearTimeout(timer); timer = null; } }
     cardEl.addEventListener("touchstart", start, { passive: true });
     cardEl.addEventListener("touchmove", cancel, { passive: true });
-    cardEl.addEventListener("touchend", cancel);
+    // Non-passive: after a long-press, preventDefault suppresses the emulated mouse/click events for
+    // this gesture, so the finger-lift doesn't immediately dismiss the detail overlay it just opened.
+    cardEl.addEventListener("touchend", function (e) { cancel(); if (longPressed) { e.preventDefault(); } }, { passive: false });
     cardEl.addEventListener("mousedown", start);
     cardEl.addEventListener("mouseup", cancel);
     cardEl.addEventListener("mouseleave", cancel);
@@ -590,7 +592,11 @@
     if (c.text) { d.appendChild(el("div", "detail-text", c.text)); }
     d.appendChild(el("button", "opt", "Close"));
     overlay.appendChild(d);
-    overlay.onclick = function () { if (overlay.parentNode) { overlay.parentNode.removeChild(overlay); } };
+    // Arm dismissal only after the opening gesture has fully settled, so a late emulated click from
+    // the long-press can't close the overlay the instant it appears.
+    var armed = false;
+    setTimeout(function () { armed = true; }, 350);
+    overlay.onclick = function () { if (armed && overlay.parentNode) { overlay.parentNode.removeChild(overlay); } };
     document.body.appendChild(overlay);
   }
 
@@ -603,6 +609,7 @@
 
     var box = el("div", "dialog setup-dialog");
     box.appendChild(el("h3", "", "New Commander Game"));
+    if (payload && payload.error) { box.appendChild(el("div", "setup-error", payload.error)); }
 
     var aiWrap = el("div", "");
     function rebuild() {
@@ -639,8 +646,11 @@
         human: humanSel.value,
         ai: aiSelects.map(function (s) { return s.value; })
       });
+      // Keep the setup visible (just disabled) until the game actually starts — setGameView calls
+      // hideSetup(). If the start fails, the server re-sends setup with an error, re-enabling this.
+      start.disabled = true;
+      start.textContent = "Starting…";
       setStatus("starting game…");
-      hideSetup();
     };
     box.appendChild(start);
 
