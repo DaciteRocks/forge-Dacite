@@ -182,8 +182,8 @@
     zones.appendChild(handZone(p));
     zones.appendChild(battlefieldZone(p.battlefield));
     zones.appendChild(zone("Command", p.command));
-    zones.appendChild(zone("Graveyard", p.graveyard));
-    zones.appendChild(zone("Exile", p.exile));
+    zones.appendChild(compactZone("Graveyard", p.graveyard));
+    zones.appendChild(compactZone("Exile", p.exile));
     zones.appendChild(zone("Library", null, p.librarySize));
     box.appendChild(zones);
     return box;
@@ -256,6 +256,40 @@
     z.appendChild(el("h3", "", label));
     (cards || []).forEach(function (c) { z.appendChild(renderCard(c)); });
     return z;
+  }
+
+  // A compact zone (graveyard / exile): just a count + a View button that opens the full list, so
+  // these seldom-inspected zones don't dominate the board.
+  function compactZone(name, cards) {
+    var z = el("div", "zone compact");
+    var n = cards ? cards.length : 0;
+    z.appendChild(el("h3", "", name + " (" + n + ")"));
+    if (n > 0) {
+      var view = el("button", "zone-view", "View");
+      view.onclick = function () { showZoneCards(name, cards); };
+      z.appendChild(view);
+    }
+    return z;
+  }
+
+  // List every card in a zone in an overlay; tap a card to read its full detail.
+  function showZoneCards(name, cards) {
+    var overlay = el("div", "detail-overlay");
+    var d = el("div", "dialog");
+    d.appendChild(el("h3", "", name + " (" + cards.length + ")"));
+    var list = el("div", "zone-cards");
+    cards.forEach(function (c) {
+      var row = el("button", "opt", (commanders[c.id] ? "👑 " : "") + (c.name || "?") + (c.type ? " — " + c.type : ""));
+      row.onclick = function () { showCardDetail(c); };
+      list.appendChild(row);
+    });
+    d.appendChild(list);
+    d.appendChild(el("button", "opt", "Close"));
+    overlay.appendChild(d);
+    var armed = false;
+    setTimeout(function () { armed = true; }, 200);
+    overlay.onclick = function (e) { if (armed && e.target === overlay) { overlay.parentNode.removeChild(overlay); } };
+    document.body.appendChild(overlay);
   }
 
   function renderCard(c, childrenOf) {
@@ -409,12 +443,14 @@
     }), function (value) { reply(id, value); }, function () { reply(id, { index: -1 }); });
   }
 
-  // Multi-select for getChoices / chooseEntitiesForEffect (min..max).
+  // Multi-select for getChoices / chooseEntitiesForEffect (min..max). A negative min/max means
+  // "unbounded" — notably reveal() calls getChoices(msg,-1,-1,items) as a pure acknowledgement,
+  // where Confirm must be enabled with nothing selected.
   function showMultiSelect(payload, id) {
     var p = payload || {};
     var options = p.options || [];
-    var min = p.min || 0;
-    var max = p.max != null ? p.max : options.length;
+    var min = (p.min != null && p.min >= 0) ? p.min : 0;
+    var max = (p.max != null && p.max >= 0) ? p.max : options.length;
     // Cap the effective minimum at the number of options so Confirm is always reachable — a
     // min greater than the option count (server clamps it too) would otherwise never enable.
     var effMin = Math.min(min, options.length);

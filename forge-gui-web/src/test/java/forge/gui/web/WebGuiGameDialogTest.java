@@ -75,6 +75,28 @@ public class WebGuiGameDialogTest {
         Assert.assertEquals(result.get(), List.of("A"), "an empty reply falls back to the first min choices");
     }
 
+    @Test
+    public void getChoicesWithNegativeMinIsAnAcknowledgement() throws Exception {
+        // reveal() calls getChoices(msg, -1, -1, items) purely to show cards — an empty reply must
+        // come back empty (NOT be forced to the first item), and the client's Confirm must be usable.
+        final List<String> sent = new CopyOnWriteArrayList<>();
+        final WebSession session = new WebSession(sent::add);
+        final WebGuiGame gui = new WebGuiGame(session);
+        final FSerializableFunction<String, String> asIs = s -> s;
+
+        final AtomicReference<List<String>> result = new AtomicReference<>();
+        final Thread asker = new Thread(() ->
+                result.set(gui.getChoices("AI can't play these", -1, -1, List.of("Card A", "Card B"), null, asIs)));
+        asker.start();
+
+        final long id = awaitOutbound(sent, "getChoices");
+        session.onClientMessage("{\"replyTo\":" + id + ",\"value\":{\"indices\":[]}}");
+        asker.join(3000);
+
+        Assert.assertNotNull(result.get());
+        Assert.assertTrue(result.get().isEmpty(), "a reveal/acknowledge must not force-select an item");
+    }
+
     /** Wait for the first outbound message, assert its type, and return its request id. */
     private static long awaitOutbound(final List<String> sent, final String expectedType) throws Exception {
         final long deadline = System.currentTimeMillis() + 3000;
