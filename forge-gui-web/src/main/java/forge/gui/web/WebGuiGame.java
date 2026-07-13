@@ -55,6 +55,10 @@ public final class WebGuiGame extends NetworkGuiGame {
 
     private final WebSession session;
 
+    /** The player this browser controls, captured from {@link #openView}. Preferred over the
+     * engine's mutable {@code currentPlayer} for routing actions to the right controller. */
+    private volatile PlayerView localPlayer;
+
     public WebGuiGame(final WebSession session) {
         this.session = session;
         if (session != null) {
@@ -86,7 +90,11 @@ public final class WebGuiGame extends NetworkGuiGame {
     }
 
     private void dispatchAction(final String type, final JsonNode payload) {
-        final IGameController controller = getGameController();
+        // Route to the controller for the player this browser owns (captured in openView), rather
+        // than the engine's mutable currentPlayer, so a click can't be misrouted or dropped during
+        // a transient current-player change. Falls back to currentPlayer if openView hasn't run yet.
+        final PlayerView seat = localPlayer;
+        final IGameController controller = seat != null ? getGameController(seat) : getGameController();
         if (controller == null) {
             return;
         }
@@ -195,6 +203,9 @@ public final class WebGuiGame extends NetworkGuiGame {
         if (myPlayers != null) {
             for (final PlayerView p : myPlayers) {
                 myIds.add(p.getId());
+            }
+            if (localPlayer == null && !myPlayers.isEmpty()) {
+                localPlayer = myPlayers.iterator().next(); // single web seat: the human
             }
         }
         send("openView", myIds);

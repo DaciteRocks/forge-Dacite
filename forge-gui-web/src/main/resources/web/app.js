@@ -301,14 +301,17 @@
   }
 
   // ── Dialogs (reply to a blocking game-thread question) ───────────────────────
+  // The reply unblocks the game thread, so every dialog MUST be answerable. A Cancel always
+  // replies too (here with index -1, which getAbilityToPlay reads as "no ability" -> null),
+  // so a misclick can never trap the user waiting on the question.
   function showAbilityDialog(payload, id) {
     var opts = (payload && payload.abilities) || [];
     openModal((payload && payload.hostName) || "Choose an ability", opts.map(function (o) {
       return { label: o.description || ("Option " + o.index), value: { index: o.index } };
-    }), function (value) { reply(id, value); });
+    }), function (value) { reply(id, value); }, function () { reply(id, { index: -1 }); });
   }
 
-  function openModal(title, options, onPick) {
+  function openModal(title, options, onPick, onCancel) {
     var dialog = el("div", "dialog");
     dialog.appendChild(el("h3", "", title));
     options.forEach(function (opt) {
@@ -316,6 +319,9 @@
       b.onclick = function () { closeModal(); onPick(opt.value); };
       dialog.appendChild(b);
     });
+    var cancel = el("button", "opt", "Cancel");
+    cancel.onclick = function () { closeModal(); if (onCancel) { onCancel(); } };
+    dialog.appendChild(cancel);
     modalEl.innerHTML = "";
     modalEl.appendChild(dialog);
     modalEl.classList.add("show");
