@@ -99,10 +99,12 @@ final class WebDialogs {
     }
 
     /**
-     * Validate a distribution reply: it must have exactly {@code size} non-negative entries summing
-     * to {@code total}. Returns the clamped amounts, or {@code null} if invalid (caller falls back).
+     * Validate a distribution reply: it must have exactly {@code size} entries, each at least
+     * {@code minEach} after clamping negatives to zero, summing to {@code total}. Returns the
+     * clamped amounts, or {@code null} if invalid (the caller then falls back to a safe default).
      */
-    static List<Integer> validateDistribution(final List<Integer> amounts, final int size, final int total) {
+    static List<Integer> validateDistribution(final List<Integer> amounts, final int size,
+                                              final int total, final int minEach) {
         if (amounts == null || amounts.size() != size) {
             return null;
         }
@@ -110,6 +112,9 @@ final class WebDialogs {
         int sum = 0;
         for (final int a : amounts) {
             final int v = Math.max(0, a);
+            if (v < minEach) {
+                return null; // a required-at-least-one target got nothing
+            }
             clamped.add(v);
             sum += v;
         }

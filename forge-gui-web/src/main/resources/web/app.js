@@ -68,10 +68,10 @@
       case "chooseEntity": showChooseEntity(payload, id); break;
       case "chooseEntities": showMultiSelect(payload, id); break;
       case "order": showOrder(payload, id); break;
-      case "assignDamage": showDistribute(payload, id, payload && payload.damage, payload && payload.blockers,
+      case "assignDamage": showDistribute(id, payload && payload.damage, payload && payload.blockers, 0,
         payload ? ("Assign " + payload.damage + " damage" + (payload.attackerName ? " from " + payload.attackerName : "")) : "Assign damage"); break;
-      case "assignAmount": showDistribute(payload, id, payload && payload.amount, payload && payload.options,
-        (payload && payload.label) || "Distribute amount"); break;
+      case "assignAmount": showDistribute(id, payload && payload.amount, payload && payload.options,
+        (payload && payload.atLeastOne) ? 1 : 0, (payload && payload.label) || "Distribute amount"); break;
       case "finishGame": promptEl.textContent = "Game over."; break;
       default:
         console.log("unhandled message:", type, payload, "id=", id);
@@ -394,6 +394,9 @@
     var options = p.options || [];
     var min = p.min || 0;
     var max = p.max != null ? p.max : options.length;
+    // Cap the effective minimum at the number of options so Confirm is always reachable — a
+    // min greater than the option count (server clamps it too) would otherwise never enable.
+    var effMin = Math.min(min, options.length);
     var selected = {};
     (p.selected || []).forEach(function (i) { selected[i] = true; });
 
@@ -406,7 +409,7 @@
     function refresh() {
       options.forEach(function (o) { o._btn.textContent = label(o); });
       var n = Object.keys(selected).length;
-      confirm.disabled = !(n >= min && n <= max);
+      confirm.disabled = !(n >= effMin && n <= max);
     }
     options.forEach(function (o) {
       var b = plainButton("", function () {
@@ -457,22 +460,24 @@
     showDialog(dialog);
   }
 
-  // Distribute a fixed total across items (assignCombatDamage / assignGenericAmount).
-  function showDistribute(payload, id, total, items, title) {
+  // Distribute a fixed total across items (assignCombatDamage / assignGenericAmount). Each amount
+  // is clamped to >= 0 (so a typed negative can't make the running total lie), and Confirm requires
+  // sum === total and every item >= minEach (minEach = 1 enforces "at least one to each").
+  function showDistribute(id, total, items, minEach, title) {
     items = items || [];
     var dialog = el("div", "dialog");
     dialog.appendChild(el("h3", "", title));
     var tally = el("div", "", "");
     dialog.appendChild(tally);
     var inputs = [];
-    function sum() { return inputs.reduce(function (a, i) { return a + (parseInt(i.value, 10) || 0); }, 0); }
-    var confirm = optButton("Confirm", function () {
-      reply(id, { amounts: inputs.map(function (i) { return parseInt(i.value, 10) || 0; }) });
-    });
+    function amounts() { return inputs.map(function (i) { return Math.max(0, parseInt(i.value, 10) || 0); }); }
+    var confirm = optButton("Confirm", function () { reply(id, { amounts: amounts() }); });
     function refresh() {
-      var s = sum();
+      var vals = amounts();
+      var s = vals.reduce(function (a, v) { return a + v; }, 0);
+      var meetsMin = vals.every(function (v) { return v >= minEach; });
       tally.textContent = "Assigned " + s + " / " + total;
-      confirm.disabled = s !== total;
+      confirm.disabled = !(s === total && meetsMin);
     }
     items.forEach(function (it) {
       var row = el("div", "");

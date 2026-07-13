@@ -391,37 +391,73 @@ public final class WebGuiGame extends NetworkGuiGame {
     public Map<CardView, Integer> assignCombatDamage(final CardView attacker, final List<CardView> blockers,
                                                      final int damage, final GameEntityView defender,
                                                      final boolean overrideOrder, final boolean maySkip) {
-        if (blockers == null || blockers.isEmpty()) {
-            return null; // nothing to split among; the engine assigns to the defender directly
+        // NOTE: returning null is NOT "auto-assign" — the combat resolver treats it as "assign a
+        // different attacker first" and re-queues this one, which would loop forever on the last
+        // attacker. So we must always return a complete, legal map here.
+        final List<CardView> bl = blockers != null ? blockers : new ArrayList<>();
+        final boolean hasDefender = defender != null;
+        if (!overrideOrder) {
+            // Standard rules: assign lethal to each blocker in the already-chosen order, then any
+            // trample excess to the defender (a null map key). Always a legal assignment.
+            return autoAssignCombat(bl, damage, hasDefender);
         }
-        final Map<String, Object> payload = new HashMap<>();
-        payload.put("attackerId", attacker != null ? attacker.getId() : null);
-        payload.put("attackerName", attacker != null ? attacker.getName() : null);
-        payload.put("damage", damage);
-        payload.put("maySkip", maySkip);
-        final List<Map<String, Object>> bl = new ArrayList<>();
-        for (int i = 0; i < blockers.size(); i++) {
-            final CardView b = blockers.get(i);
+
+        // "Divide combat damage as you choose": the player freely distributes among blockers and,
+        // if present, the defender. Targets = blockers, then the defender as a trailing entry.
+        final List<Map<String, Object>> targets = new ArrayList<>();
+        for (int i = 0; i < bl.size(); i++) {
+            final CardView b = bl.get(i);
             final Map<String, Object> o = new HashMap<>();
             o.put("index", i);
-            o.put("id", b.getId());
             o.put("label", b.getName());
             o.put("lethal", lethalDamage(b));
-            bl.add(o);
+            targets.add(o);
         }
-        payload.put("blockers", bl);
+        if (hasDefender) {
+            final Map<String, Object> o = new HashMap<>();
+            o.put("index", bl.size());
+            o.put("label", defender.getName());
+            targets.add(o);
+        }
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("attackerName", attacker != null ? attacker.getName() : null);
+        payload.put("damage", damage);
+        payload.put("blockers", targets);
 
-        final JsonNode reply = ask("assignDamage", payload);
+        final int slots = bl.size() + (hasDefender ? 1 : 0);
         final List<Integer> amounts = WebDialogs.validateDistribution(
-                WebDialogs.intArray(reply, "amounts"), blockers.size(), damage);
+                WebDialogs.intArray(ask("assignDamage", payload), "amounts"), slots, damage, 0);
         if (amounts == null) {
-            return null; // invalid/absent -> let the engine auto-assign lethal-in-order
+            return autoAssignCombat(bl, damage, hasDefender); // bad/absent reply -> legal default
         }
         final Map<CardView, Integer> result = new HashMap<>();
-        for (int i = 0; i < blockers.size(); i++) {
-            result.put(blockers.get(i), amounts.get(i));
+        for (int i = 0; i < bl.size(); i++) {
+            result.put(bl.get(i), amounts.get(i));
+        }
+        if (hasDefender) {
+            result.put(null, amounts.get(bl.size())); // null key = the defending player/planeswalker
         }
         return result;
+    }
+
+    /** Lethal-first assignment in the given blocker order, with trample excess to the defender. */
+    private static Map<CardView, Integer> autoAssignCombat(final List<CardView> blockers, final int damage,
+                                                           final boolean hasDefender) {
+        final Map<CardView, Integer> map = new HashMap<>();
+        int remaining = damage;
+        for (final CardView b : blockers) {
+            final int assign = Math.min(remaining, lethalDamage(b));
+            map.put(b, assign);
+            remaining -= assign;
+        }
+        if (remaining > 0) {
+            if (hasDefender) {
+                map.put(null, remaining); // trample overflow to the defender
+            } else if (!blockers.isEmpty()) {
+                map.merge(blockers.get(blockers.size() - 1), remaining, Integer::sum);
+            }
+        }
+        return map;
     }
 
     private static int lethalDamage(final CardView c) {
@@ -447,8 +483,9 @@ public final class WebGuiGame extends NetworkGuiGame {
         payload.put("options", WebDialogs.options(labels));
 
         final JsonNode reply = ask("assignAmount", payload);
+        // atLeastOne requires every target to receive >= 1; validateDistribution enforces that.
         final List<Integer> amounts = WebDialogs.validateDistribution(
-                WebDialogs.intArray(reply, "amounts"), keys.size(), amount);
+                WebDialogs.intArray(reply, "amounts"), keys.size(), amount, atLeastOne ? 1 : 0);
         if (amounts == null) {
             return null;
         }
@@ -623,6 +660,13 @@ public final class WebGuiGame extends NetworkGuiGame {
                              final CardView referenceCard, final boolean sideboardingMode) {
         if (sourceChoices == null || sourceChoices.size() < 2) {
             return sourceChoices; // nothing to order
+        }
+        // Only handle full-order prompts (order every item, nothing left behind, no pre-filled
+        // destination) — the common case: damage order, arranging the top of library, trigger
+        // order. Partial/insert-into-list prompts fall back to the engine's order (Phase 4 polish).
+        if (remainingObjectsMin != 0 || remainingObjectsMax != 0
+                || (destChoices != null && !destChoices.isEmpty())) {
+            return sourceChoices;
         }
         final Map<String, Object> payload = new HashMap<>();
         payload.put("title", title);

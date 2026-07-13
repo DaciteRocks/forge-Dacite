@@ -64,15 +64,25 @@ public class WebDialogsTest {
 
     @Test
     public void validateDistributionAcceptsExactSumAndClampsNegatives() {
-        Assert.assertEquals(WebDialogs.validateDistribution(List.of(2, 1), 2, 3), List.of(2, 1));
-        // Negative is clamped to 0; the remaining must still sum to the total.
-        Assert.assertEquals(WebDialogs.validateDistribution(List.of(3, -5), 2, 3), List.of(3, 0));
+        Assert.assertEquals(WebDialogs.validateDistribution(List.of(2, 1), 2, 3, 0), List.of(2, 1));
+        // A negative clamps to 0, but then the sum no longer matches -> rejected (prevents desync
+        // where the JS running total counted the raw negative).
+        Assert.assertNull(WebDialogs.validateDistribution(List.of(5, -2), 2, 3, 0),
+                "clamping a negative changes the sum -> reject rather than silently misassign");
     }
 
     @Test
     public void validateDistributionRejectsWrongSizeOrSum() {
-        Assert.assertNull(WebDialogs.validateDistribution(List.of(1, 1), 3, 2), "wrong length -> null");
-        Assert.assertNull(WebDialogs.validateDistribution(List.of(1, 1), 2, 3), "wrong sum -> null");
-        Assert.assertNull(WebDialogs.validateDistribution(null, 2, 3), "no reply -> null");
+        Assert.assertNull(WebDialogs.validateDistribution(List.of(1, 1), 3, 2, 0), "wrong length -> null");
+        Assert.assertNull(WebDialogs.validateDistribution(List.of(1, 1), 2, 3, 0), "wrong sum -> null");
+        Assert.assertNull(WebDialogs.validateDistribution(null, 2, 3, 0), "no reply -> null");
+    }
+
+    @Test
+    public void validateDistributionEnforcesPerTargetMinimum() {
+        // atLeastOne (minEach=1): every target must get >= 1.
+        Assert.assertEquals(WebDialogs.validateDistribution(List.of(1, 2), 2, 3, 1), List.of(1, 2));
+        Assert.assertNull(WebDialogs.validateDistribution(List.of(3, 0), 2, 3, 1),
+                "a zero target violates at-least-one");
     }
 }
