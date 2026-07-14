@@ -23,6 +23,7 @@
   var mySeatIds = [];
   var cardNames = {};        // id -> name, rebuilt each render so combat can name blockers.
   var selectable = {};       // id -> true for cards the engine will accept a click on.
+  var highlighted = {};      // entity id -> true (e.g. the current defender in declare-attackers).
   var commanders = {};       // id -> true for commander cards, marked wherever they are.
   var lastGame = null;       // last GameView, so a selectables update can re-render.
 
@@ -76,6 +77,12 @@
       case "buttons": renderButtons(payload); break;
       case "message": if (payload && payload.message) { promptEl.textContent = payload.message; } break;
       case "selectables": setSelectables(payload); break;
+      case "highlight":
+        if (payload && payload.id != null) {
+          if (payload.on) { highlighted[payload.id] = true; } else { delete highlighted[payload.id]; }
+          if (lastGame) { renderGame(lastGame); }
+        }
+        break;
       case "getAbilityToPlay": showAbilityDialog(payload, id); break;
       case "confirm": showConfirm(payload, id); break;
       case "confirmDialog": showConfirmDialog(payload, id); break;
@@ -104,8 +111,10 @@
   function renderGame(g) {
     if (!g) { return; }
     titleEl.textContent = g.title || "Forge Web";
-    turnEl.textContent = "Turn " + g.turn + (g.phase ? " · " + g.phase : "");
+    var myTurn = g.playerTurnId != null && mySeatIds.indexOf(g.playerTurnId) >= 0 && !g.gameOver;
+    turnEl.textContent = (myTurn ? "● YOUR TURN · " : "") + "Turn " + g.turn + (g.phase ? " · " + g.phase : "");
     if (g.gameOver) { turnEl.textContent += g.winner ? " · WINNER: " + g.winner : " · game over"; }
+    document.body.classList.toggle("myturn", myTurn);
 
     indexCardNames(g);
     commanders = {};
@@ -175,10 +184,18 @@
   function nameOf(id) { return cardNames[id] || ("#" + id); }
 
   function renderPlayer(p, playerTurnId) {
-    var box = el("div", "player");
+    var mine = mySeatIds.indexOf(p.id) >= 0;
+    var isTurn = p.id === playerTurnId;
+    var box = el("div", "player" + (isTurn ? " turn" : "") + (mine ? " me" : ""));
     var h = el("h2");
     h.appendChild(el("span", "life", "♥ " + p.life));
-    h.appendChild(el("span", "", p.name || ("Player " + p.id)));
+
+    // The player name is tappable to target this player (selectPlayer) — e.g. choosing which
+    // opponent to attack in declare-attackers. Highlighted = the current defender / chosen target.
+    var name = el("span", "pname" + (highlighted[p.id] ? " defender" : ""),
+      (highlighted[p.id] ? "⚔ " : "") + (p.name || ("Player " + p.id)));
+    name.onclick = function () { sendAction("selectPlayer", { playerId: p.id }); };
+    h.appendChild(name);
 
     var pool = manaPips(p.manaPool);
     if (pool) { h.appendChild(pool); }
@@ -186,9 +203,9 @@
     if (ctrs) { h.appendChild(ctrs); }
 
     var tags = [];
-    if (p.id === playerTurnId) { tags.push("active turn"); }
+    if (isTurn) { tags.push("active turn"); }
     if (p.hasPriority) { tags.push("priority"); }
-    if (mySeatIds.indexOf(p.id) >= 0) { tags.push("you"); }
+    if (mine) { tags.push("you"); }
     if (p.ai) { tags.push("AI"); }
     if (tags.length) { h.appendChild(el("span", "tag", "· " + tags.join(" · "))); }
     box.appendChild(h);

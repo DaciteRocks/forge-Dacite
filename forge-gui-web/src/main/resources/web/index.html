@@ -13,14 +13,20 @@
     input, textarea, .detail-text { -webkit-user-select:text; user-select:text; }
     header { padding:10px 14px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:baseline; position:sticky; top:0; }
     header .turn { color:var(--muted); }
+    body.myturn header { background:#123324; border-bottom:2px solid var(--accent); }
+    body.myturn header .turn { color:var(--accent); font-weight:700; }
     #status { margin-left:auto; font-size:12px; color:var(--muted); }
     #prompt { padding:8px 14px; background:#182233; border-bottom:1px solid var(--line); min-height:20px; }
     #buttons { display:flex; gap:8px; padding:8px 14px; }
     #buttons button { background:var(--accent); color:#04121f; border:0; border-radius:8px; padding:8px 14px; font-weight:600; }
     #buttons button[disabled] { opacity:.35; }
     .player { border:1px solid var(--line); border-radius:12px; margin:10px 14px; background:var(--panel); }
+    .player.turn { border-color:var(--accent); }
+    .player.turn.me { box-shadow:0 0 0 2px var(--accent); }
     .player > h2 { margin:0; padding:8px 12px; font-size:15px; display:flex; gap:10px; align-items:center; border-bottom:1px solid var(--line); }
     .player .life { color:var(--accent); font-weight:700; }
+    .player .pname { cursor:pointer; text-decoration:underline dotted var(--muted); text-underline-offset:3px; }
+    .player .pname.defender { color:#ff6b6b; text-decoration:none; font-weight:700; }
     .player .tag { font-size:11px; color:var(--muted); }
     .zones { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; padding:10px 12px; }
     .zone h3 { margin:0 0 6px; font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); }

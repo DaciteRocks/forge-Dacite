@@ -423,6 +423,17 @@ public final class WebGuiGame extends NetworkGuiGame {
         send("selectables", Collections.emptyList());
     }
 
+    // Highlight a player or card — the engine uses this to mark, e.g., the current defender you're
+    // declaring attackers against, so the browser can show which opponent your attackers will hit.
+    @Override
+    public void setHighlighted(final GameEntityView gv, final boolean b) {
+        super.setHighlighted(gv, b);
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("id", gv != null ? gv.getId() : null);
+        payload.put("on", b);
+        send("highlight", payload);
+    }
+
     // Render-neutral notifications — no-op in Phase 0.
     @Override public void alertUser() { }
     @Override public void enableOverlay() { }
