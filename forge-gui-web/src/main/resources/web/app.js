@@ -70,7 +70,7 @@
   // ── Inbound ────────────────────────────────────────────────────────────────
   function handle(type, payload, id) {
     switch (type) {
-      case "openView": mySeatIds = payload || []; break;
+      case "openView": mySeatIds = payload || []; highlighted = {}; selectable = {}; break;
       case "setup": renderSetup(payload); break;
       case "setGameView": hideSetup(); lastGame = payload; renderGame(payload); break;
       case "prompt": promptEl.textContent = payload && payload.message ? payload.message : ""; break;
@@ -738,6 +738,9 @@
   function renderSetup(payload) {
     // Returning to the lobby (e.g. after a concede): clear any leftover in-game UI behind the setup.
     closeModal();
+    document.body.classList.remove("myturn");
+    highlighted = {};
+    selectable = {};
     var overlays = document.getElementsByClassName("detail-overlay");
     while (overlays.length) { overlays[0].parentNode.removeChild(overlays[0]); }
     buttonsEl.innerHTML = "";

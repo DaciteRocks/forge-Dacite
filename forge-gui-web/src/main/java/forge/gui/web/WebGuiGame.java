@@ -423,15 +423,19 @@ public final class WebGuiGame extends NetworkGuiGame {
         send("selectables", Collections.emptyList());
     }
 
-    // Highlight a player or card — the engine uses this to mark, e.g., the current defender you're
-    // declaring attackers against, so the browser can show which opponent your attackers will hit.
+    // Surface PLAYER highlights (e.g. the current defender in declare-attackers) so the browser can
+    // mark which opponent your attackers will hit. Only players: card ids and player ids share one
+    // id space, so forwarding card highlights (targeting/blocking) would wrongly mark a same-id
+    // player — and the client only uses player highlights anyway.
     @Override
     public void setHighlighted(final GameEntityView gv, final boolean b) {
         super.setHighlighted(gv, b);
-        final Map<String, Object> payload = new HashMap<>();
-        payload.put("id", gv != null ? gv.getId() : null);
-        payload.put("on", b);
-        send("highlight", payload);
+        if (gv instanceof PlayerView) {
+            final Map<String, Object> payload = new HashMap<>();
+            payload.put("id", gv.getId());
+            payload.put("on", b);
+            send("highlight", payload);
+        }
     }
 
     // Render-neutral notifications — no-op in Phase 0.
