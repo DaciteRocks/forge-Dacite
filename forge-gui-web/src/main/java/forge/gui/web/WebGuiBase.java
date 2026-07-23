@@ -110,7 +110,6 @@ public final class WebGuiBase implements IGuiBase {
     @Override public ISkinImage createLayeredImage(final PaperCard card, final FSkinProp background,
                                                    final String overlayFilename, final float opacity) { return null; }
     @Override public void clearImageCache() { }
-    @Override public void refreshSkin() { }
     @Override public int getAvatarCount() { return 0; }
     @Override public int getSleevesCount() { return 0; }
     @Override public float getScreenScale() { return 1f; }

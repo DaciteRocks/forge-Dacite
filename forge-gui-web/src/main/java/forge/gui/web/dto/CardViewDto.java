@@ -4,6 +4,8 @@ import forge.game.card.CardView;
 import forge.game.card.CounterType;
 import forge.game.player.PlayerView;
 
+import com.google.common.collect.Multiset;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -98,13 +100,16 @@ public final class CardViewDto {
         return out.isEmpty() ? null : out;
     }
 
-    static Map<String, Integer> counterMap(final Map<CounterType, Integer> src) {
+    static Map<String, Integer> counterMap(final Multiset<CounterType> src) {
         if (src == null || src.isEmpty()) {
             return null;
         }
         final Map<String, Integer> out = new LinkedHashMap<>();
-        for (final Map.Entry<CounterType, Integer> e : src.entrySet()) {
-            out.put(String.valueOf(e.getKey()), e.getValue());
+        for (final Multiset.Entry<CounterType> e : src.entrySet()) {
+            // Key by the counter's stable identifier (e.g. "P1P1"), matching the pre-Multiset
+            // behavior of String.valueOf(CounterType) — NOT getName(), which is the display form
+            // ("+1/+1") the browser doesn't key on.
+            out.put(String.valueOf(e.getElement()), e.getCount());
         }
         return out;
     }

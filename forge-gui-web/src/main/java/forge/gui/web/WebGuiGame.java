@@ -1,9 +1,9 @@
 package forge.gui.web;
 
 import forge.LobbyPlayer;
-import forge.ai.GameState;
 import forge.deck.CardPool;
 import forge.game.GameEntityView;
+import forge.game.GameState;
 import forge.game.GameView;
 import forge.game.card.CardView;
 import forge.game.event.GameEvent;
@@ -14,8 +14,10 @@ import forge.game.player.PlayerView;
 import forge.game.spellability.SpellAbilityView;
 import forge.game.zone.ZoneType;
 import forge.gamemodes.match.NextGameDecision;
+import forge.gamemodes.match.YieldController;
 import forge.gamemodes.net.NetworkGuiGame;
 import forge.gui.FThreads;
+import forge.gui.interfaces.IGuiGame.OrderResult;
 import forge.gui.web.dto.CardViewDto;
 import forge.gui.web.dto.GameViewDto;
 import forge.interfaces.IGameController;
@@ -137,7 +139,10 @@ public final class WebGuiGame extends NetworkGuiGame {
                 case "selectButtonOk": controller.selectButtonOk(); break;
                 case "selectButtonCancel": controller.selectButtonCancel(); break;
                 case "passPriority": controller.passPriority(); break;
-                case "passPriorityUntilEndOfTurn": controller.passPriorityUntilEndOfTurn(); break;
+                // "Pass until end of turn" is now expressed via the yield system rather than a
+                // dedicated controller method: endTurn() sends a SetAutoPassUntilEndOfTurn envelope
+                // for this seat, and the engine's input auto-passes the rest of the turn.
+                case "passPriorityUntilEndOfTurn": YieldController.endTurn(controller, seat); break;
                 case "concede": controller.concede(); leaveToLobby(true); break;
                 case "undoLastAction": controller.undoLastAction(); break;
                 case "alphaStrike": controller.alphaStrike(); break;
@@ -334,7 +339,7 @@ public final class WebGuiGame extends NetworkGuiGame {
     }
 
     @Override
-    public void showCardPromptMessage(final PlayerView playerView, final String message, final CardView card) {
+    public void showPromptMessage(final PlayerView playerView, final String message, final CardView card) {
         pushGameView();
         final Map<String, Object> payload = new HashMap<>();
         payload.put("playerId", playerView != null ? playerView.getId() : null);
@@ -404,8 +409,8 @@ public final class WebGuiGame extends NetworkGuiGame {
     // so it can highlight/enable them. Clicking a non-selectable card is harmless (the engine's
     // input simply ignores it), but the hint makes the legal plays obvious.
     @Override
-    public void setSelectables(final Iterable<CardView> cards) {
-        super.setSelectables(cards);
+    public void setSelectables(final Iterable<CardView> cards, final int min, final int max) {
+        super.setSelectables(cards, min, max);
         final List<Integer> ids = new ArrayList<>();
         if (cards != null) {
             for (final CardView c : cards) {
@@ -428,13 +433,18 @@ public final class WebGuiGame extends NetworkGuiGame {
     // id space, so forwarding card highlights (targeting/blocking) would wrongly mark a same-id
     // player — and the client only uses player highlights anyway.
     @Override
-    public void setHighlighted(final GameEntityView gv, final boolean b) {
-        super.setHighlighted(gv, b);
-        if (gv instanceof PlayerView) {
-            final Map<String, Object> payload = new HashMap<>();
-            payload.put("id", gv.getId());
-            payload.put("on", b);
-            send("highlight", payload);
+    public void setHighlighted(final Iterable<GameEntityView> entities, final boolean b) {
+        super.setHighlighted(entities, b);
+        if (entities == null) {
+            return;
+        }
+        for (final GameEntityView gv : entities) {
+            if (gv instanceof PlayerView) {
+                final Map<String, Object> payload = new HashMap<>();
+                payload.put("id", gv.getId());
+                payload.put("on", b);
+                send("highlight", payload);
+            }
         }
     }
 
@@ -776,18 +786,21 @@ public final class WebGuiGame extends NetworkGuiGame {
     }
 
     @Override
-    public <T> List<T> order(final String title, final String top, final int remainingObjectsMin,
-                             final int remainingObjectsMax, final List<T> sourceChoices, final List<T> destChoices,
-                             final CardView referenceCard, final boolean sideboardingMode) {
+    public <T> OrderResult<T> order(final String title, final String top, final int remainingObjectsMin,
+                                    final int remainingObjectsMax, final List<T> sourceChoices, final List<T> destChoices,
+                                    final CardView referenceCard, final boolean sideboardingMode,
+                                    final boolean showRememberCheckbox) {
+        // showRememberCheckbox (the "apply to similar decisions" affordance) isn't rendered in the
+        // browser yet, so we never remember — every OrderResult carries rememberDecision = false.
         if (sourceChoices == null || sourceChoices.size() < 2) {
-            return sourceChoices; // nothing to order
+            return new OrderResult<>(sourceChoices, false); // nothing to order
         }
         // Only handle full-order prompts (order every item, nothing left behind, no pre-filled
         // destination) — the common case: damage order, arranging the top of library, trigger
         // order. Partial/insert-into-list prompts fall back to the engine's order (Phase 4 polish).
         if (remainingObjectsMin != 0 || remainingObjectsMax != 0
                 || (destChoices != null && !destChoices.isEmpty())) {
-            return sourceChoices;
+            return new OrderResult<>(sourceChoices, false);
         }
         final Map<String, Object> payload = new HashMap<>();
         payload.put("title", title);
@@ -801,13 +814,13 @@ public final class WebGuiGame extends NetworkGuiGame {
             final List<T> ordered = new ArrayList<>();
             for (final int i : orderIdx) {
                 if (i < 0 || i >= sourceChoices.size()) {
-                    return sourceChoices;
+                    return new OrderResult<>(sourceChoices, false);
                 }
                 ordered.add(sourceChoices.get(i));
             }
-            return ordered;
+            return new OrderResult<>(ordered, false);
         }
-        return sourceChoices;
+        return new OrderResult<>(sourceChoices, false);
     }
 
     /** Build choice options carrying each entity's label AND, for cards, its CardViewDto so the

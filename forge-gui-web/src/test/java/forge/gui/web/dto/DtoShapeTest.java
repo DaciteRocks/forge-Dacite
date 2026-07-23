@@ -2,6 +2,8 @@ package forge.gui.web.dto;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.HashMultiset;
+import com.google.common.collect.Multiset;
 import forge.game.card.CounterType;
 import org.testng.Assert;
 import org.testng.annotations.Test;
@@ -85,12 +87,12 @@ public class DtoShapeTest {
     @Test
     public void counterMapHandlesNullEmptyAndEntries() {
         Assert.assertNull(CardViewDto.counterMap(null), "null counters -> null");
-        Assert.assertNull(CardViewDto.counterMap(new LinkedHashMap<>()), "empty counters -> null");
+        Assert.assertNull(CardViewDto.counterMap(HashMultiset.create()), "empty counters -> null");
 
-        final Map<CounterType, Integer> src = new LinkedHashMap<>();
-        src.put(CounterType.getType("P1P1"), 2);
+        final Multiset<CounterType> src = HashMultiset.create();
+        src.add(CounterType.getType("P1P1"), 2);
         final Map<String, Integer> out = CardViewDto.counterMap(src);
         Assert.assertNotNull(out);
-        Assert.assertEquals(out.get("P1P1").intValue(), 2, "counter type serializes to its name key");
+        Assert.assertEquals(out.get("P1P1").intValue(), 2, "counter type serializes to its stable identifier key");
     }
 }
