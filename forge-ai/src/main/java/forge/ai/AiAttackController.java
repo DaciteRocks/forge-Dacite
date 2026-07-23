@@ -202,6 +202,12 @@ public class AiAttackController {
         return choosePreferredDefenderPlayer(ai, false);
     }
     public static Player choosePreferredDefenderPlayer(Player ai, boolean forCombatDmg) {
+        // Single opponent: no choice to make (from upstream — cheap early-out).
+        PlayerCollection soleCheck = ai.getOpponents();
+        if (soleCheck.size() == 1) {
+            return soleCheck.get(0);
+        }
+
         Player defender = ai.getWeakestOpponent(); //Concentrate on opponent within easy kill range
 
         // TODO for multiplayer combat avoid players with cantLose or (if not playing infect) cantLoseForZeroOrLessLife and !canLoseLife
@@ -273,6 +279,11 @@ public class AiAttackController {
         if (forCombatDmg) {
             if (opp.isMonarch() && ai.canBecomeMonarch()) score += 4;
             if (opp.hasInitiative()) score += 4;
+            // Grafted from upstream: don't bother swinging at a player we can't
+            // actually damage. Large penalties (vs. this method's modest scale)
+            // so such a player is never the "clear standout" the caller looks for.
+            if (!opp.canLoseLife()) score -= 1000;
+            if (opp.cantLoseForZeroOrLessLife()) score -= 500;
         }
 
         // Large hand = more answers/threats incoming.
@@ -287,7 +298,7 @@ public class AiAttackController {
      * </p>
      *
      */
-    public final static List<Card> sortAttackers(final List<Card> in) {
+    public static List<Card> sortAttackers(final List<Card> in) {
         final List<Card> result = new ArrayList<>();
 
         // Cards with triggers should come first (for Battle Cry)
@@ -632,7 +643,7 @@ public class AiAttackController {
             final CardCollectionView beastions = ai.getCardsIn(ZoneType.Battlefield, "Beastmaster Ascension");
             int minCreatures = 7;
             for (final Card beastion : beastions) {
-                final int counters = beastion.getCounters(CounterEnumType.QUEST);
+                final int counters = beastion.getCounters(CounterType.getType("QUEST"));
                 minCreatures = Math.min(minCreatures, 7 - counters);
             }
             if (this.attackers.size() >= minCreatures) {
@@ -979,7 +990,12 @@ public class AiAttackController {
                         }
                     }
                     if (mustAttackDef != null) {
-                        combat.addAttacker(attacker, mustAttackDef);
+                        // combat is shared across these parallel futures and its attacker
+                        // multimap is not thread-safe; unsynchronized addAttacker calls
+                        // collide (ConcurrentModificationException, dropped attackers)
+                        synchronized (combat) {
+                            combat.addAttacker(attacker, mustAttackDef);
+                        }
                         attackersLeft.remove(attacker);
                         numForcedAttackers.incrementAndGet();
                     }
