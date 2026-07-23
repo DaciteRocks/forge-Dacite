@@ -202,10 +202,11 @@ public class AiAttackController {
         return choosePreferredDefenderPlayer(ai, false);
     }
     public static Player choosePreferredDefenderPlayer(Player ai, boolean forCombatDmg) {
+        // Opponents fetched once and reused throughout this method.
+        final List<Player> opps = Lists.newArrayList(ai.getOpponents());
         // Single opponent: no choice to make (from upstream — cheap early-out).
-        PlayerCollection soleCheck = ai.getOpponents();
-        if (soleCheck.size() == 1) {
-            return soleCheck.get(0);
+        if (opps.size() == 1) {
+            return opps.get(0);
         }
 
         Player defender = ai.getWeakestOpponent(); //Concentrate on opponent within easy kill range
@@ -217,7 +218,6 @@ public class AiAttackController {
             // board power + tempo signals (monarch/initiative) + commander presence. This keeps
             // the AI from ganging on one player by accident but also stops it from wasting attacks
             // on a durdling opponent while someone else is about to win.
-            List<Player> opps = Lists.newArrayList(ai.getOpponents());
             if (opps.isEmpty()) return defender;
 
             // Score each opponent and pick highest
@@ -241,7 +241,9 @@ public class AiAttackController {
                 return best;
             }
             if (forCombatDmg) {
-                for (Player p : ai.getOpponents()) {
+                // Snapshot before adding: monarch/initiative players get double-weighted in the
+                // random pick below, and iterating opps while adding to it would throw.
+                for (Player p : Lists.newArrayList(opps)) {
                     if (p.isMonarch() && ai.canBecomeMonarch()) {
                         opps.add(p);
                     }
