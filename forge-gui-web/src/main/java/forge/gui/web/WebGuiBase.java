@@ -56,6 +56,7 @@ public final class WebGuiBase implements IGuiBase {
     @Override public boolean isRunningOnDesktop() { return true; }
     @Override public boolean isLibgdxPort() { return false; }
     @Override public String getCurrentVersion() { return BuildInfo.getVersionString(); }
+    @Override public String getUserAgent() { return "Forge/" + getCurrentVersion() + " (gui-web)"; }
 
     @Override
     public String getAssetsDir() {

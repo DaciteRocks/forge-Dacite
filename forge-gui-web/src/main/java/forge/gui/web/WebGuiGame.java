@@ -1,9 +1,11 @@
 package forge.gui.web;
 
+import java.util.LinkedHashSet;
+import forge.trackable.TrackableObject;
+import forge.gamemodes.match.Selection;
 import forge.LobbyPlayer;
 import forge.deck.CardPool;
 import forge.game.GameEntityView;
-import forge.game.GameState;
 import forge.game.GameView;
 import forge.game.card.CardView;
 import forge.game.event.GameEvent;
@@ -23,8 +25,6 @@ import forge.gui.web.dto.GameViewDto;
 import forge.interfaces.IGameController;
 import forge.item.PaperCard;
 import forge.localinstance.skin.FSkinProp;
-import forge.player.PlayerZoneUpdate;
-import forge.player.PlayerZoneUpdates;
 import forge.trackable.TrackableCollection;
 import forge.util.FSerializableFunction;
 import forge.util.ITriggerEvent;
@@ -138,7 +138,7 @@ public final class WebGuiGame extends NetworkGuiGame {
             switch (type) {
                 case "selectButtonOk": controller.selectButtonOk(); break;
                 case "selectButtonCancel": controller.selectButtonCancel(); break;
-                case "passPriority": controller.passPriority(); break;
+                case "passPriority": controller.selectButtonOk(); break; // OK on the priority prompt passes
                 // "Pass until end of turn" is now expressed via the yield system rather than a
                 // dedicated controller method: endTurn() sends a SetAutoPassUntilEndOfTurn envelope
                 // for this seat, and the engine's input auto-passes the rest of the turn.
@@ -408,44 +408,54 @@ public final class WebGuiGame extends NetworkGuiGame {
     // Selectable-card affordances: tell the browser which cards the engine will accept a click on,
     // so it can highlight/enable them. Clicking a non-selectable card is harmless (the engine's
     // input simply ignores it), but the hint makes the legal plays obvious.
+    // Selectable-card affordances: tell the browser which cards the engine will accept a click on,
+    // so it can highlight/enable them. Clicking a non-selectable card is harmless (the engine's
+    // input simply ignores it), but the hint makes the legal plays obvious.
+    //
+    // Upstream folded setSelectables/clearSelectables/setHighlighted into one Selection per prompt.
+    // Player highlights (e.g. the current defender in declare-attackers) are the players in
+    // selection.chosen(); only those are forwarded, because card ids and player ids share one id
+    // space and the client only uses player highlights.
     @Override
-    public void setSelectables(final Iterable<CardView> cards, final int min, final int max) {
-        super.setSelectables(cards, min, max);
+    public void setSelection(final Selection next) {
+        final Selection prev = getSelection();
+        super.setSelection(next);
         final List<Integer> ids = new ArrayList<>();
-        if (cards != null) {
-            for (final CardView c : cards) {
-                if (c != null) {
-                    ids.add(c.getId());
-                }
+        for (final CardView c : next.cards()) {
+            if (c != null) {
+                ids.add(c.getId());
             }
         }
         send("selectables", ids);
-    }
-
-    @Override
-    public void clearSelectables() {
-        super.clearSelectables();
-        send("selectables", Collections.emptyList());
-    }
-
-    // Surface PLAYER highlights (e.g. the current defender in declare-attackers) so the browser can
-    // mark which opponent your attackers will hit. Only players: card ids and player ids share one
-    // id space, so forwarding card highlights (targeting/blocking) would wrongly mark a same-id
-    // player — and the client only uses player highlights anyway.
-    @Override
-    public void setHighlighted(final Iterable<GameEntityView> entities, final boolean b) {
-        super.setHighlighted(entities, b);
-        if (entities == null) {
-            return;
-        }
-        for (final GameEntityView gv : entities) {
-            if (gv instanceof PlayerView) {
-                final Map<String, Object> payload = new HashMap<>();
-                payload.put("id", gv.getId());
-                payload.put("on", b);
-                send("highlight", payload);
+        final Set<PlayerView> before = playersIn(prev.chosen());
+        final Set<PlayerView> after = playersIn(next.chosen());
+        for (final PlayerView pv : before) {
+            if (!after.contains(pv)) {
+                sendHighlight(pv, false);
             }
         }
+        for (final PlayerView pv : after) {
+            if (!before.contains(pv)) {
+                sendHighlight(pv, true);
+            }
+        }
+    }
+
+    private static Set<PlayerView> playersIn(final List<TrackableObject> objects) {
+        final Set<PlayerView> players = new LinkedHashSet<>();
+        for (final TrackableObject o : objects) {
+            if (o instanceof PlayerView pv) {
+                players.add(pv);
+            }
+        }
+        return players;
+    }
+
+    private void sendHighlight(final PlayerView pv, final boolean on) {
+        final Map<String, Object> payload = new HashMap<>();
+        payload.put("id", pv.getId());
+        payload.put("on", on);
+        send("highlight", payload);
     }
 
     // Render-neutral notifications — no-op in Phase 0.
@@ -455,8 +465,6 @@ public final class WebGuiGame extends NetworkGuiGame {
     @Override public void flashIncorrectAction() { }
     @Override public void setPlayerAvatar(final LobbyPlayer player, final IHasIcon ihi) { }
     @Override public void updateShards(final Iterable<PlayerView> shardsUpdate) { }
-    @Override public void hideZones(final PlayerView controller, final Iterable<PlayerZoneUpdate> zonesToUpdate) { }
-    @Override public void restoreOldZones(final PlayerView playerView, final PlayerZoneUpdates playerZoneUpdates) { }
 
     // ── Bookkeeping ──────────────────────────────────────────────────────────
 
@@ -473,11 +481,6 @@ public final class WebGuiGame extends NetworkGuiGame {
     @Override
     protected void updateCurrentPlayer(final PlayerView player) {
         // Browser derives the active player from GameView.playerTurnId.
-    }
-
-    @Override
-    public GameState getGamestate() {
-        return null;
     }
 
     // ── Interactive questions — real sendAndWait round-trips ─────────────────────
@@ -671,9 +674,10 @@ public final class WebGuiGame extends NetworkGuiGame {
 
     @Override
     public List<CardView> manipulateCardList(final String title, final Iterable<CardView> cards,
-                                             final Iterable<CardView> manipulable, final boolean toTop,
-                                             final boolean toBottom, final boolean toAnywhere) {
-        return null; // free-form library manipulation UI is deferred (Phase 4 polish)
+                                             final Iterable<CardView> manipulable, final ZoneType secondPile) {
+        // Free-form library manipulation UI is deferred (Phase 4 polish). An empty list is the engine's
+        // "no answer" case: every manipulable card stays on top in its current order.
+        return new ArrayList<>();
     }
 
     @Override
@@ -693,15 +697,9 @@ public final class WebGuiGame extends NetworkGuiGame {
     }
 
     @Override
-    public PlayerZoneUpdates openZones(final PlayerView controller, final Collection<ZoneType> zones,
-                                       final Map<PlayerView, Object> players, final boolean backupLastZones) {
-        return null; // zone-peek viewer is deferred (Phase 4 polish); effects still resolve
-    }
-
-    @Override
-    public Iterable<PlayerZoneUpdate> tempShowZones(final PlayerView controller,
-                                                    final Iterable<PlayerZoneUpdate> zonesToUpdate) {
-        return zonesToUpdate;
+    public void openZones(final PlayerView controller, final Collection<ZoneType> zones,
+                          final Map<PlayerView, Object> players) {
+        // zone-peek viewer is deferred (Phase 4 polish); effects still resolve
     }
 
     @Override
